@@ -1,0 +1,13 @@
+{
+    "customer": {
+        "id": "CUST-001",
+        "personalInfo": {
+            "firstName": "John",
+            "lastName": "Doe",
+            "email": "john.doe@example.com"
+        },
+        "status": "A",
+        "type": "REGULAR",
+        "joinDate": "2024-01-01"
+    }
+}

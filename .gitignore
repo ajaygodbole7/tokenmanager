@@ -1,0 +1,203 @@
+######################
+# Node.js
+######################
+/node/
+node_tmp/
+node_modules/
+npm-debug.log.*
+/.awcache/
+/.cache-loader/
+
+######################
+# CSS Preprocessors
+######################
+.sass-cache/
+
+######################
+# Eclipse
+######################
+*.pydevproject
+.project
+.metadata
+tmp/
+*.tmp
+*.nib
+local.properties
+.classpath
+.settings/
+.loadpath
+.factorypath
+.externalToolBuilders/
+*.launch
+.cproject
+.buildpath
+/.sts4-cache/
+
+######################
+# IntelliJ IDEA
+######################
+.idea/
+*.iml
+*.iws
+*.ipr
+*.ids
+*.orig
+out/
+
+######################
+# Visual Studio Code
+######################
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+######################
+# Maven
+######################
+/log/
+/target/
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+buildNumber.properties
+.mvn/timing.properties
+.mvn/wrapper/maven-wrapper.jar
+.mvn/wrapper/maven-wrapper.properties
+.flattened-pom.xml
+
+######################
+# Gradle
+######################
+.gradle/
+/build/
+/buildSrc/.gradle/
+/buildSrc/build/
+.gradle/wrapper/
+gradle-app.setting
+!**/src/main/**/build/
+!**/src/test/**/build/
+!gradle/wrapper/gradle-wrapper.jar
+
+######################
+# Logs
+######################
+*.log
+
+######################
+# Package Files
+######################
+*.jar
+*.war
+*.ear
+*.db
+*.zip
+*.tar.gz
+*.rar
+
+######################
+# Operating System Files
+######################
+# Windows
+Thumbs.db
+Desktop.ini
+# macOS
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+.svn
+
+######################
+# General Directories
+######################
+/bin/
+/deploy/
+
+######################
+# Compiled Files
+######################
+*.class
+
+######################
+# Temporary and Backup Files
+######################
+*.*~
+*~
+*.merge_file*
+*.swp
+*.bak
+
+######################
+# Code Coverage and Test Reports
+######################
+/coverage/
+/.nyc_output/
+/.test-results/
+
+######################
+# ESLint
+######################
+.eslintcache
+
+######################
+# BlueJ
+######################
+*.ctxt
+
+######################
+# Mobile Tools for Java (J2ME)
+######################
+.mtj.tmp/
+
+######################
+# JVM Crash Logs
+######################
+hs_err_pid*
+replay_pid*
+
+######################
+# Other IDEs (Optional)
+######################
+# NetBeans
+nbproject/private/
+build/
+dist/
+# Android Studio
+/local.properties
+/.idea/
+/captures/
+
+######################
+# Archives and Compressed Files
+######################
+*.7z
+*.gz
+*.tar
+*.bz2
+*.xz
+*.pkg
+
+######################
+# CI/CD
+######################
+# Jenkins
+.workspace/
+
+######################
+# Spring Boot
+######################
+*.pid
+spring-boot-*.pid
+
+######################
+# Docker
+######################
+.docker/
+docker-compose.override.yml
+
