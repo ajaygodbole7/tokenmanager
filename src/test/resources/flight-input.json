@@ -1,0 +1,140 @@
+{
+  "bookingRef": "FLIGHT-2024-001",
+  "bookedAt": "2024-12-01",
+  "status": "CONFIRMED",
+  "passengers": [
+    {
+      "id": "PAX1",
+      "type": "ADT",
+      "title": "MR",
+      "firstName": "JOHN",
+      "lastName": "DOE",
+      "document": {
+        "type": "PASSPORT",
+        "number": "AB123456",
+        "expiryDate": "2028-01-01"
+      },
+      "specialRequests": ["WHEELCHAIR", "VEGETARIAN_MEAL"],
+      "frequentFlyerNumber": "FF123456",
+      "seatPreference": "WINDOW"
+    },
+    {
+      "id": "PAX2",
+      "type": "CHD",
+      "title": "MISS",
+      "firstName": "JANE",
+      "lastName": "DOE",
+      "document": {
+        "type": "PASSPORT",
+        "number": "CD789012",
+        "expiryDate": "2028-01-01"
+      },
+      "specialRequests": ["CHILD_MEAL"],
+      "seatPreference": "NEXT_TO_PAX1"
+    }
+  ],
+  "itinerary": {
+    "flights": [
+      {
+        "flightNumber": "AI101",
+        "departure": {
+          "airport": "SFO",
+          "terminal": "2",
+          "scheduledTime": "2024-12-15T10:30:00Z"
+        },
+        "arrival": {
+          "airport": "JFK",
+          "terminal": "4",
+          "scheduledTime": "2024-12-15T19:00:00Z"
+        },
+        "aircraft": "BOEING_777",
+        "status": "SCHEDULED",
+        "cabinClass": "ECONOMY_PREMIUM",
+        "baggage": {
+          "checkedBags": 2,
+          "cabinBags": 1,
+          "specialItems": []
+        }
+      },
+      {
+        "flightNumber": "AI102",
+        "departure": {
+          "airport": "JFK",
+          "terminal": "4",
+          "scheduledTime": "2024-12-22T14:30:00Z"
+        },
+        "arrival": {
+          "airport": "SFO",
+          "terminal": "2",
+          "scheduledTime": "2024-12-22T23:00:00Z"
+        },
+        "aircraft": "BOEING_777",
+        "status": "SCHEDULED",
+        "cabinClass": "ECONOMY_PREMIUM",
+        "baggage": {
+          "checkedBags": 2,
+          "cabinBags": 1,
+          "specialItems": []
+        }
+      }
+    ],
+    "type": "ROUND_TRIP"
+  },
+  "pricing": {
+    "baseAmount": 1200.00,
+    "taxes": [
+      {
+        "code": "TAX1",
+        "description": "Airport Tax",
+        "amount": 50.00
+      },
+      {
+        "code": "TAX2",
+        "description": "Fuel Surcharge",
+        "amount": 100.00
+      }
+    ],
+    "fees": [
+      {
+        "code": "FEE1",
+        "description": "Service Fee",
+        "amount": 25.00
+      }
+    ],
+    "discounts": [
+      {
+        "code": "DISC1",
+        "description": "Early Bird Discount",
+        "amount": 100.00
+      }
+    ],
+    "totalAmount": 1275.00,
+    "currency": "USD",
+    "paymentStatus": "PAID"
+  },
+  "contact": {
+    "email": "JOHN.DOE@email.com",
+    "phone": "+1-555-123-4567",
+    "emergencyContact": {
+      "name": "JANE DOE",
+      "relationship": "SPOUSE",
+      "phone": "+1-555-987-6543"
+    }
+  },
+  "extras": [
+    {
+      "type": "MEAL",
+      "code": "VGML",
+      "quantity": 1,
+      "status": "CONFIRMED",
+      "price": 15.00
+    },
+    {
+      "type": "SEAT",
+      "code": "EXTRA_LEGROOM",
+      "quantity": 2,
+      "status": "CONFIRMED",
+      "price": 30.00
+    }
+  ]
+}

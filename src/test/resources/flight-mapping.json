@@ -1,0 +1,228 @@
+{
+  "reservationId": "$.bookingRef",
+  "bookingTime": "$.bookedAt",
+  "bookingStatus": {
+    "type": "value",
+    "sourcePath": "$.status",
+    "mappings": [
+      {
+        "source": "CONFIRMED",
+        "target": "Booking Confirmed"
+      },
+      {
+        "source": "CANCELLED",
+        "target": "Booking Cancelled"
+      }
+    ],
+    "default": "Unknown Status"
+  },
+  "passengerDetails": {
+    "type": "array",
+    "sourcePath": "$.passengers",
+    "itemMapping": {
+      "passengerId": "id",
+      "fullName": {
+        "type": "function",
+        "function": "$concat",
+        "args": [
+          "$.title",
+          " ",
+          "$.firstName",
+          " ",
+          "$.lastName"
+        ]
+      },
+      "type": {
+        "type": "value",
+        "sourcePath": "$.type",
+        "mappings": [
+          {
+            "source": "ADT",
+            "target": "Adult"
+          },
+          {
+            "source": "CHD",
+            "target": "Child"
+          },
+          {
+            "source": "INF",
+            "target": "Infant (0-2 yrs)"
+          }
+        ]
+      },
+      "seatPreference": "$.seatPreference",
+      "specialRequests": "$.specialRequests"
+    }
+  },
+  "formattedBookingDate": {
+    "type": "function",
+    "function": "$formatDate",
+    "sourcePath": "$.bookedAt",
+    "args": [
+      "MM/dd/yyyy"
+    ]
+  },
+  "bookingStatusDetails": {
+    "type": "conditional",
+    "conditions": [
+      {
+        "path": "$.status",
+        "operator": "eq",
+        "value": "CONFIRMED",
+        "result": "Confirmed VIP"
+      },
+      {
+        "path": "$.status",
+        "operator": "eq",
+        "value": "CANCELLED",
+        "result": "Cancelled"
+      }
+    ],
+    "default": "Unknown Status"
+  },
+  "frequentFlyerNumbers": {
+    "type": "array",
+    "sourcePath": "$.passengers",
+    "itemMapping": {
+      "frequentFlyerNumber": "$.frequentFlyerNumber"
+    }
+  },
+  "totalTaxes": {
+    "type": "function",
+    "function": "$sum",
+    "sourcePath": "$.pricing.taxes[*].amount"
+  },
+  "flightRoutes": {
+    "type": "array",
+    "sourcePath": "$.itinerary.flights",
+    "itemMapping": {
+      "route": {
+        "type": "function",
+        "function": "$concat",
+        "args": [
+          "$.departure.airport",
+          " - ",
+          "$.arrival.airport"
+        ]
+      }
+    }
+  },
+  "formattedFlightTimes": {
+    "type": "array",
+    "sourcePath": "$.itinerary.flights",
+    "itemMapping": {
+      "flightNumber": "$.flightNumber",
+      "formattedDeparture": {
+        "type": "function",
+        "function": "$formatDate",
+        "sourcePath": "$.departure.scheduledTime"
+      },
+      "formattedArrival": {
+        "type": "function",
+        "function": "$formatDate",
+        "sourcePath": "$.arrival.scheduledTime"
+      }
+    }
+  },
+  "baggagePriority": {
+    "type": "value",
+    "sourcePath": "$.status",
+    "mappings": [
+      {
+        "source": "FIRST",
+        "target": "HIGH"
+      },
+      {
+        "source": "BUSINESS",
+        "target": "MEDIUM"
+      }
+    ],
+    "default": "LOW"
+  },
+  "seatPreferences": {
+    "type": "array",
+    "sourcePath": "$.passengers",
+    "itemMapping": {
+      "seatPreference": "$.seatPreference"
+    }
+  },
+  "flightSummaries": {
+    "type": "array",
+    "sourcePath": "$.itinerary.flights",
+    "itemMapping": {
+      "flightNumber": "$.flightNumber",
+      "route": {
+        "type": "function",
+        "function": "$concat",
+        "args": [
+          "$.departure.airport",
+          " - ",
+          "$.arrival.airport"
+        ]
+      },
+      "status": "$.status",
+      "departureTime": "$.departure.scheduledTime",
+      "arrivalTime": "$.arrival.scheduledTime"
+    }
+  },
+  "totalAllowedCheckedBags": {
+    "type": "function",
+    "function": "$sum",
+    "sourcePath": "$.itinerary.flights[*].baggage.checkedBags"
+  },
+  "passengersWithGeneratedIds": {
+    "type": "array",
+    "sourcePath": "$.passengers",
+    "itemMapping": {
+      "id": "$.id",
+      "generatedId": {
+        "type": "function",
+        "function": "$uuid"
+      }
+    }
+  },
+  "baggageAllowancePerPassenger": {
+    "type": "array",
+    "sourcePath": "$.itinerary.flights",
+    "itemMapping": {
+      "flightNumber": "$.flightNumber",
+      "baggageAllowance": {
+        "type": "value",
+        "sourcePath": "$.cabinClass",
+        "mappings": [
+          {
+            "source": "FIRST",
+            "target": "50"
+          },
+          {
+            "source": "BUSINESS",
+            "target": "40"
+          },
+          {
+            "source": "ECONOMY",
+            "target": "30"
+          }
+        ],
+        "default": "20"
+      },
+      "cabinBags": "$.baggage.cabinBags",
+      "totalAllowance": {
+        "type": "value",
+        "sourcePath": "$.baggage.cabinBags",
+        "mappings": [
+          {
+            "source": "1",
+            "target": "50"
+          },
+          {
+            "source": "2",
+            "target": "100"
+          }
+        ],
+        "default": "Unknown Total Allowance"
+      }
+    }
+  }
+
+
+}
