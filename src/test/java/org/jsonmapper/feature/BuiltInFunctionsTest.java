@@ -10,6 +10,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import org.jsonmapper.JsonMapper;
+import org.jsonmapper.JsonTransformationException;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -276,28 +277,98 @@ class BuiltInFunctionsTest {
     }
 
     @Test
-    @DisplayName("$formatDate should format date according to pattern")
-    void formatDateFunction_ShouldFormatDate() throws Exception {
+    @DisplayName("$formatDate should correctly format ISO8601 date-time string")
+    void formatDateFunction_ShouldFormatISO8601DateTime() throws Exception {
       String sourceJson = """
-                    {
-                        "date": "2023-12-31T23:59:59"
-                    }
-                    """;
+                  {
+                      "date": "2023-12-31T23:59:59Z"
+                  }
+                  """;
 
       String mappingJson = """
-                    {
-                        "result": {
-                            "type": "function",
-                            "function": "$formatDate",
-                            "sourcePath": "$.date",
-                            "args": ["dd/MM/yyyy"]
-                        }
-                    }
-                    """;
+                  {
+                      "result": {
+                          "type": "function",
+                          "function": "$formatDate",
+                          "sourcePath": "$.date"                    
+                      }
+                  }
+                  """;
 
       JsonNode result = jsonMapper.transform(sourceJson, getCleanJson(mappingJson));
-      assertThat(result.get("result").asText()).isEqualTo("31/12/2023");
+      assertThat(result.get("result").asText()).isEqualTo("2023-12-31T23:59:59Z");
     }
+
+    @Test
+    @DisplayName("$formatDate should add default time for date without time")
+    void formatDateFunction_ShouldAddDefaultTime() throws Exception {
+      String sourceJson = """
+                  {
+                      "date": "2023-12-31"
+                  }
+                  """;
+
+      String mappingJson = """
+                  {
+                      "result": {
+                          "type": "function",
+                          "function": "$formatDate",
+                          "sourcePath": "$.date"                    
+                      }
+                  }
+                  """;
+
+      JsonNode result = jsonMapper.transform(sourceJson, getCleanJson(mappingJson));
+      assertThat(result.get("result").asText()).isEqualTo("2023-12-31T00:00:00Z");
+    }
+
+    @Test
+    @DisplayName("$formatDate should throw JsonTransformationException for invalid date input")
+    void formatDateFunction_ShouldThrowExceptionForInvalidDate() {
+      String sourceJson = """
+                  {
+                      "date": "invalid-date"
+                  }
+                  """;
+
+      String mappingJson = """
+                  {
+                      "result": {
+                          "type": "function",
+                          "function": "$formatDate",
+                          "sourcePath": "$.date"                    
+                      }
+                  }
+                  """;
+
+      assertThatThrownBy(() -> jsonMapper.transform(sourceJson, getCleanJson(mappingJson)))
+          .isInstanceOf(JsonTransformationException.class)
+         ;
+    }
+
+    @Test
+    @DisplayName("$formatDate should throw JsonTransformationException for empty string input")
+    void formatDateFunction_ShouldThrowExceptionForEmptyInput() {
+      String sourceJson = """
+                  {
+                      "date": ""
+                  }
+                  """;
+
+      String mappingJson = """
+                  {
+                      "result": {
+                          "type": "function",
+                          "function": "$formatDate",
+                          "sourcePath": "$.date"                    
+                      }
+                  }
+                  """;
+
+      assertThatThrownBy(() -> jsonMapper.transform(sourceJson, getCleanJson(mappingJson)))
+          .isInstanceOf(JsonTransformationException.class);
+    }
+
   }
 
   @Nested
@@ -351,6 +422,30 @@ class BuiltInFunctionsTest {
     }
   }
 
+  @Test
+  @DisplayName("$concat should concatenate strings with JsonPath arguments")
+  void concatFunction_ShouldHandleJsonPaths() throws Exception {
+    String sourceJson = """
+                {
+                    "greeting": "Hello",
+                    "name": "World"
+                }
+                """;
+
+    String mappingJson = """
+                {
+                    "result": {
+                        "type": "function",
+                        "function": "$concat",
+                        "args": ["$.greeting", " ", "$.name"]
+                    }
+                }
+                """;
+
+    JsonNode result = jsonMapper.transform(sourceJson, getCleanJson(mappingJson));
+    assertThat(result.get("result").asText()).isEqualTo("Hello World");
+  }
+
   // Edge Cases and Error Handling
   @Nested
   @DisplayName("Edge Cases and Error Handling Tests")
@@ -358,13 +453,15 @@ class BuiltInFunctionsTest {
     @Test
     @DisplayName("Functions should handle null input")
     void functions_ShouldHandleNullInput() throws Exception {
-      String sourceJson = """
+      String sourceJson =
+          """
             {
                 "value": null
             }
             """;
 
-      String mappingJson = """
+      String mappingJson =
+          """
             {
                 "string": {
                     "type": "function",
@@ -380,20 +477,22 @@ class BuiltInFunctionsTest {
             """;
 
       JsonNode result = jsonMapper.transform(sourceJson, getCleanJson(mappingJson));
-      assertThat(result.get("string").asText()).isEqualTo("");  // Expect empty string for null
-      assertThat(result.get("number").isNull()).isTrue();       // Expect null for invalid number
+      assertThat(result.get("string").asText()).isEqualTo(""); // Expect empty string for null
+      assertThat(result.get("number").isNull()).isTrue(); // Expect null for invalid number
     }
 
     @Test
     @DisplayName("$substring should handle out of bounds indices")
     void substringFunction_ShouldHandleOutOfBounds() throws Exception {
-      String sourceJson = """
+      String sourceJson =
+          """
                     {
                         "text": "Hello"
                     }
                     """;
 
-      String mappingJson = """
+      String mappingJson =
+          """
                     {
                         "result": {
                             "type": "function",
@@ -407,30 +506,6 @@ class BuiltInFunctionsTest {
       JsonNode result = jsonMapper.transform(sourceJson, getCleanJson(mappingJson));
       assertThat(result.get("result").asText()).isEqualTo("Hello");
     }
-
-    @Test
-    @DisplayName("$formatDate should handle invalid date format")
-    void formatDateFunction_ShouldHandleInvalidFormat() throws Exception {
-      String sourceJson = """
-                    {
-                        "date": "2023-12-31T23:59:59"
-                    }
-                    """;
-
-      String mappingJson = """
-                    {
-                        "result": {
-                            "type": "function",
-                            "function": "$formatDate",
-                            "sourcePath": "$.date",
-                            "args": ["invalid"]
-                        }
-                    }
-                    """;
-
-      assertThatThrownBy(() ->
-                             jsonMapper.transform(sourceJson, getCleanJson(mappingJson)))
-          .isInstanceOf(Exception.class);
-    }
   }
+
 }

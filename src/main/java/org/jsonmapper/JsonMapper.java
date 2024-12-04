@@ -11,8 +11,13 @@ import com.jayway.jsonpath.Option;
 import com.jayway.jsonpath.PathNotFoundException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoField;
+import java.time.temporal.TemporalAccessor;
 import java.util.*;
 import java.util.function.BiFunction;
 import java.util.stream.StreamSupport;
@@ -660,7 +665,7 @@ public class JsonMapper {
   private boolean compareValues(Object source, JsonNode target, boolean isEqualityCheck) {
     // Handle null values - simplest case first
     if (target.isNull()) {
-      return isEqualityCheck ? (source == null) : (source != null);
+      return isEqualityCheck == (source == null);
     }
 
     if (source == null) {
@@ -687,7 +692,7 @@ public class JsonMapper {
 
     // Handle booleans - both sides must be booleans
     if (source instanceof Boolean && target.isBoolean()) {
-      return isEqualityCheck == ((Boolean) source).equals(target.booleanValue());
+      return isEqualityCheck == source.equals(target.booleanValue());
     }
 
     // If types don't match or no specific type handling
@@ -759,17 +764,36 @@ public class JsonMapper {
 
     // Date Functions
     functions.put("$now", (ctx, args) -> LocalDateTime.now().format(DateTimeFormatter.ISO_DATE_TIME));
+    /*
     functions.put("$formatDate", (ctx, args) -> {
       String format = args.length > 0 ? String.valueOf(args[0]) : "yyyy-MM-dd HH:mm:ss";
       return LocalDateTime.parse(unquoteString(String.valueOf(ctx))).format(DateTimeFormatter.ofPattern(format));
+    });
+    */
+    functions.put("$formatDate", (ctx, args) -> {
+      String inputDate = unquoteString(String.valueOf(ctx));
+      return formatToISO8601(inputDate);
     });
 
     // Utility Functions
     functions.put("$uuid", (ctx, args) -> UUID.randomUUID().toString());
     functions.put("$concat", (ctx, args) -> {
-      StringBuilder result = new StringBuilder(unquoteString(String.valueOf(ctx)));
+      StringBuilder result = new StringBuilder();
+      // Include the resolved context value (ctx) only if it is a primitive value
+      if (ctx != null && !(ctx instanceof JsonNode && ((JsonNode) ctx).isContainerNode())) {
+        result.append(unquoteString(String.valueOf(ctx)));
+      }
+
       for (Object arg : args) {
-        result.append(arg);
+        if (arg instanceof String && (((String) arg).startsWith("$.") || ((String) arg).startsWith("$["))) {
+          // Resolve the argument as a JsonPath
+          Object resolvedValue = evaluateJsonPath((JsonNode) ctx, (String) arg);
+          if (resolvedValue != null) {
+            result.append(unquoteString(resolvedValue.toString()));
+          }
+        } else {
+          result.append(arg);
+        }
       }
       return result.toString();
     });
@@ -797,4 +821,98 @@ public class JsonMapper {
     // Return zero for unsupported types
     return BigDecimal.ZERO;
   }
+
+  private Object resolveRelativePath(JsonNode currentContext, String path) {
+    try {
+      if (path.startsWith("$.")) {
+        // Absolute path, evaluate from root
+        return evaluateJsonPath(currentContext, path);
+      } else {
+        // Relative path, evaluate within current context
+        return currentContext.path(path).isMissingNode() ? null : currentContext.path(path).asText();
+      }
+    } catch (Exception e) {
+      logger.error("Failed to resolve path: {}", path, e);
+      throw new JsonTransformationException("Path resolution failed for: " + path, e);
+    }
+  }
+
+  // Inside the same class
+  private static final List<DateTimeFormatter> ACCEPTABLE_FORMATS = List.of(
+      DateTimeFormatter.ISO_DATE_TIME,             // e.g., "2024-12-01T14:30:00Z"
+      DateTimeFormatter.ISO_INSTANT,              // e.g., "2024-12-01T14:30:00Z"
+      DateTimeFormatter.ofPattern("yyyy-MM-dd"),  // e.g., "2024-12-01"
+      DateTimeFormatter.ofPattern("dd-MM-yyyy"),  // e.g., "01-12-2024"
+      DateTimeFormatter.ofPattern("dd/MM/yyyy"),  // e.g., "01/12/2024"
+      DateTimeFormatter.ofPattern("MM-dd-yyyy"),  // e.g., "12-01-2024"
+      DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss"), // e.g., "2024/12/01 14:30:00"
+      DateTimeFormatter.ofPattern("yyyyMMdd"),    // e.g., "20241201"
+      DateTimeFormatter.ofPattern("dd-MM-yy"),    // e.g., "01-12-24"
+      DateTimeFormatter.ofPattern("HH:mm:ss"),    // e.g., "14:30:00" (interpreted with current date)
+      DateTimeFormatter.ofPattern("yyyyMMddHHmmss"), // e.g., "20241201143000"
+      DateTimeFormatter.ofPattern("MMM dd, yyyy"), // e.g., "Dec 01, 2024"
+      DateTimeFormatter.ofPattern("dd MMM yyyy")   // e.g., "01 Dec 2024"
+  );
+
+  private String formatToISO8601(String inputDate) {
+    for (DateTimeFormatter formatter : ACCEPTABLE_FORMATS) {
+      try {
+        TemporalAccessor temporal = formatter.parse(inputDate);
+
+        // If the input supports instant seconds (e.g., ISO_INSTANT)
+        if (temporal.isSupported(ChronoField.INSTANT_SECONDS)) {
+          return Instant.from(temporal).atOffset(ZoneOffset.UTC).format(DateTimeFormatter.ISO_INSTANT);
+        }
+
+        // If the input supports year and lacks time, add default time of 00:00:00
+        if (temporal.isSupported(ChronoField.YEAR)) {
+          LocalDate date = LocalDate.from(temporal); // Extract date
+          return date.atStartOfDay(ZoneOffset.UTC).format(DateTimeFormatter.ISO_INSTANT);
+        }
+      } catch (Exception ignored) {
+        // Continue trying other formats
+      }
+    }
+
+    // If parsing as a string failed, try interpreting as milliseconds
+    try {
+      long epochMillis = Long.parseLong(inputDate);
+      return Instant.ofEpochMilli(epochMillis).atOffset(ZoneOffset.UTC).format(DateTimeFormatter.ISO_INSTANT);
+    } catch (NumberFormatException ignored) {
+      // Not a valid millisecond timestamp
+    }
+
+    // Throw JsonTransformationException with the problematic input
+    throw new JsonTransformationException("Invalid date format: " + inputDate);
+  }
+// Unused
+  private String formatToCustomOrISO8601(String inputDate, String targetFormat) {
+    for (DateTimeFormatter formatter : ACCEPTABLE_FORMATS) {
+      try {
+        TemporalAccessor temporal = formatter.parse(inputDate);
+
+        // Apply the custom format if provided
+        DateTimeFormatter customFormatter = DateTimeFormatter.ofPattern(targetFormat);
+        if (temporal.isSupported(ChronoField.INSTANT_SECONDS)) {
+          return customFormatter.format(Instant.from(temporal).atZone(ZoneOffset.UTC));
+        } else if (temporal.isSupported(ChronoField.YEAR)) {
+          LocalDateTime dateTime = LocalDate.from(temporal).atStartOfDay();
+          return customFormatter.format(dateTime);
+        }
+      } catch (Exception ignored) {
+        // Continue trying other formats
+      }
+    }
+
+    // Fallback: Return the current UTC time in the custom format
+    try {
+      DateTimeFormatter fallbackFormatter = DateTimeFormatter.ofPattern(targetFormat);
+      return fallbackFormatter.format(Instant.now().atZone(ZoneOffset.UTC));
+    } catch (Exception e) {
+      // If even the custom format fails, default to ISO 8601
+      return Instant.now().atOffset(ZoneOffset.UTC).format(DateTimeFormatter.ISO_INSTANT);
+    }
+  }
+
+
 }
