@@ -802,4 +802,36 @@ public class ConditonalFunctionTest {
     assertThat(result.get("result").asText()).isEqualTo("MATCH");
   }
 
+  @Test
+  @DisplayName("Should use fallback field as default when input field is null")
+  void shouldUseFallbackFieldAsDefaultWhenInputFieldIsNull() throws Exception {
+    String sourceJson = """
+            {
+                "inputField": null,
+                "fallbackField": "FallbackValue"
+            }
+            """;
+
+    String mappingJson = """
+            {
+                "outputField": {
+                    "type": "conditional",
+                    "conditions": [
+                        {
+                            "path": "$.inputField",
+                            "operator": "ne",
+                            "value": null,
+                            "result": "$.inputField"
+                        }
+                    ],
+                    "default": "$.fallbackField"
+                }
+            }
+            """;
+
+    JsonNode result = jsonMapper.transform(sourceJson, getCleanJson(mappingJson));
+
+    assertThat(result.get("outputField").asText()).isEqualTo("FallbackValue");
+  }
+
 }
