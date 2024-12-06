@@ -1,0 +1,32 @@
+{
+  "rmCoreSync": {
+    "actionCode": "A",
+    "createdBy": "RM_EVENT",
+    "creationDate": "2024-10-30T14:59:53:935",
+    "updatedBy": "V1499",
+    "updatedDate": "20241030",
+    "updatedTime": "105953",
+    "guId": "RM20241030105953000000001289145",
+    "uuId": "02497d47-ef59-4cf3-a0c9-81bc45b1f5f2",
+    "partyID": "00000000185896",
+    "partyDetails": {
+      "statusCode": "AC",
+      "partyType": "P",
+      "partyOfficerPrimaryCd": "RMGR",
+      "vipCd": "CL",
+      "employeeDirectorCd": "E",
+      "partySpokenLanguageCd": "ENG",
+      "partyPrefferedCurrencyCd": "USD",
+      "shareCustomerInfomationCd": "N",
+      "shareCustomerInfoMaintDt": "20241030",
+      "dateLastRmActivity": "20241030",
+      "dateLastCustomerContact": "20180525",
+      "isoCustomerCorrespondenceLanguageCd": "EN",
+      "customerCorrespondenceLanguageGrp": "-1",
+      "regionCd": "ITPL",
+      "responsibleBranch": "RESBR",
+      "openingBranch": "HDQ",
+      "resSpannedBranch": "RESBR"
+    }
+  }
+}

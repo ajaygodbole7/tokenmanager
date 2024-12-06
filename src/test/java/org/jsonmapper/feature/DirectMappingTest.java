@@ -881,4 +881,158 @@ class DirectMappingTest {
     assertThat(result.get("chinese").asBoolean()).isTrue();
   }
 
+
+  @Test
+  @DisplayName("Should correctly map Boolean value")
+  void shouldCorrectlyMapBooleanValue() throws Exception {
+    String sourceJson = """
+        {
+            "isActive": true
+        }
+        """;
+
+    String mappingJson = """
+        {
+            "isEnabled": "$.isActive"
+        }
+        """;
+
+    JsonNode result = jsonMapper.transform(sourceJson, getCleanJson(mappingJson));
+
+    assertThat(result.get("isEnabled").asBoolean()).isTrue();
+  }
+
+  @Test
+  @DisplayName("Should assign literal true to the target field")
+  void shouldAssignLiteralTrueToTargetField() throws Exception {
+    String sourceJson = """
+        {
+            "someField": "SomeValue"
+        }
+        """;
+
+    String mappingJson = """
+        {
+            "outputField": true
+        }
+        """;
+
+    JsonNode result = jsonMapper.transform(sourceJson, getCleanJson(mappingJson));
+
+    assertThat(result.get("outputField").asBoolean()).isTrue();
+  }
+  @Test
+  @DisplayName("Should assign literal false to the target field")
+  void shouldAssignLiteralFalseToTargetField() throws Exception {
+    String sourceJson = """
+        {
+            "someField": "SomeValue"
+        }
+        """;
+
+    String mappingJson = """
+        {
+            "outputField": false
+        }
+        """;
+
+    JsonNode result = jsonMapper.transform(sourceJson, getCleanJson(mappingJson));
+
+    assertThat(result.get("outputField").asBoolean()).isFalse();
+  }
+
+  @Test
+  @DisplayName("Should handle missing fields in source JSON by setting null in output")
+  void shouldHandleMissingFieldsWithNull() throws Exception {
+    String sourceJson = """
+            {
+                "existingField": "value"
+            }
+            """;
+
+    String mappingJson = """
+            {
+                "mappedExisting": "$.existingField",
+                "mappedMissing": "$.nonExistentField"
+            }
+            """;
+
+    JsonNode result = jsonMapper.transform(sourceJson, getCleanJson(mappingJson));
+    assertThat(result.get("mappedExisting").asText()).isEqualTo("value");
+    assertThat(result.get("mappedMissing").isNull()).isTrue();
+  }
+
+  @Test
+  @DisplayName("Should allow direct string assignment without JsonPath evaluation")
+  void shouldAllowDirectStringAssignment() throws Exception {
+    String sourceJson = """
+            {
+                "someField": "value"
+            }
+            """;
+
+    String mappingJson = """
+            {
+                "directString": "literal string value",
+                "jsonPath": "$.someField"
+            }
+            """;
+
+    JsonNode result = jsonMapper.transform(sourceJson, getCleanJson(mappingJson));
+    assertThat(result.get("directString").asText()).isEqualTo("literal string value");
+    assertThat(result.get("jsonPath").asText()).isEqualTo("value");
+  }
+
+  @Test
+  @DisplayName("Should handle null values in source JSON")
+  void shouldHandleNullValuesInSource() throws Exception {
+    String sourceJson = """
+            {
+                "nullField": null,
+                "normalField": "value"
+            }
+            """;
+
+    String mappingJson = """
+            {
+                "mappedNull": "$.nullField",
+                "mappedNormal": "$.normalField"
+            }
+            """;
+
+    JsonNode result = jsonMapper.transform(sourceJson, getCleanJson(mappingJson));
+    assertThat(result.get("mappedNull").isNull()).isTrue();
+    assertThat(result.get("mappedNormal").asText()).isEqualTo("value");
+  }
+
+  @Test
+  @DisplayName("Should handle complex object with missing nested fields")
+  void shouldHandleComplexObjectWithMissingFields() throws Exception {
+    String sourceJson = """
+            {
+                "person": {
+                    "name": "John"
+                }
+            }
+            """;
+
+    String mappingJson = """
+            {
+                "details": {
+                    "type": "object",
+                    "name": "$.person.name",
+                    "age": "$.person.age",
+                    "address": "$.person.address",
+                    "constant": "Fixed Value"
+                }
+            }
+            """;
+
+    JsonNode result = jsonMapper.transform(sourceJson, getCleanJson(mappingJson));
+    assertThat(result.get("details").get("name").asText()).isEqualTo("John");
+    assertThat(result.get("details").get("age").isNull()).isTrue();
+    assertThat(result.get("details").get("address").isNull()).isTrue();
+    assertThat(result.get("details").get("constant").asText()).isEqualTo("Fixed Value");
+  }
+
 }

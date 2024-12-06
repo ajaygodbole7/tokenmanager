@@ -655,4 +655,46 @@ class ArrayMappingTest {
     assertThat(cableLine.get("category").asText()).isEqualTo("Computer Accessories");
     assertThat(cableLine.get("total").asDouble()).isEqualTo(15.00);
   }
+
+  @Test
+  @DisplayName("Should wrap single object into an array when wrapAsArray is true")
+  void testWrapSingleObjectIntoArray() throws Exception {
+    // Input JSON
+    String sourceJson = """
+            {
+                "product": {
+                    "id": "P123",
+                    "name": "Laptop"
+                }
+            }
+        """;
+    // Mapping JSON
+    String mappingJson = """
+            {
+                "products": {
+                    "type": "array",
+                    "sourcePath": "$.product",
+                    "wrapAsArray": true,
+                    "itemMapping": {
+                        "productId": "$.id",
+                        "productName": "$.name"
+                    }
+                }
+            }
+        """;
+    // Expected Output
+    String expectedOutputJson = """
+            {
+                "products": [
+                    {
+                        "productId": "P123",
+                        "productName": "Laptop"
+                    }
+                ]
+            }
+        """;
+
+    JsonNode result = jsonMapper.transform(sourceJson, getCleanJson(mappingJson));
+    assertThat(result).isEqualTo(objectMapper.readTree(expectedOutputJson));
+  }
 }

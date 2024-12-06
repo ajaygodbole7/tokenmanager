@@ -1,0 +1,119 @@
+{
+  "applicationNumber": "STP21TEST00727551",
+  "cmcReplicationReq": true,
+  "hostHandoffReq": false,
+  "validationReq": false,
+  "notificationReq": true,
+  "retailPartyModel": {
+    "type": "array",
+    "sourcePath": "$.rmCoreSync",
+    "wrapAsArray": true,
+    "itemMapping": {
+      "externalRefNo": "$.partyID",
+      "basicInfoAndCitizenshipDetails": {
+        "applicationNumber": "STP21TEST00727551",
+        "partyType": "I",
+        "title": "CA",
+        "firstName": "$.nameDetails.firstName",
+        "lastName": "$.nameDetails.lastName",
+        "dateOfBirth": {
+          "type": "function",
+          "function": "$formatDate",
+          "sourcePath": "$.personalDetails.dateOfBirth",
+          "args": ["yyyy-MM-dd"]
+        },
+        "partySubType": "INDIVIDUAL",
+        "nationality": "$.personalDetails.nationality",
+        "countryOfResidence": "$.personalDetails.nationality",
+        "residentStatus": "C",
+        "language": "$.partyDetails.partySpokenLanguageCd",
+        "isCustomer": true,
+        "isMinorCustomer": false
+      },
+      "currentAddressDetails": {
+        "partyContactDetailsList": {
+          "type": "array",
+          "sourcePath": "$.addressdetails",
+          "itemMapping": {
+            "addressType": "$.addressType",
+            "buildingName": "$.addressLine1Type",
+            "streetName": "$.addressLine1",
+            "city": "$.city",
+            "state": "$.state",
+            "zipCode": "$.zipCode",
+            "country": "$.country",
+            "isPreferred": true,
+            "location": "$.country",
+            "preferred": true,
+            "currentAddress": true,
+            "addressFrom": {
+              "type": "function",
+              "function": "$formatDate",
+              "sourcePath": "$.creationDate",
+              "args": ["yyyy-MM-dd"]
+            }
+          }
+        }
+      },
+      "idDetails": {
+        "partyIdInfoDetailsList": {
+          "type": "array",
+          "sourcePath": "$.identificationdetails",
+          "itemMapping": {
+            "idType": "$.idType",
+            "idStatus": "AVL",
+            "uniqueId": "$.idNumber",
+            "validFrom": {
+              "type": "function",
+              "function": "$formatDate",
+              "sourcePath": "$.issueDate",
+              "args": ["yyyy-MM-dd"]
+            },
+            "validTill": {
+              "type": "function",
+              "function": "$formatDate",
+              "sourcePath": "$.validTill",
+              "args": ["yyyy-MM-dd"]
+            },
+            "remarks": "ID card is valid",
+            "preferred": true
+          }
+        }
+      },
+      "taxDeclarationDetails": {
+        "asOnDate": {
+          "type": "function",
+          "function": "$now"
+        },
+        "partyTaxInfoDetailsList": [
+          {
+            "formType": "W9",
+            "validFrom": "2024-09-20",
+            "validTill": null,
+            "taxIdentificationNumberType": "SSN",
+            "taxIdentificationNumberStatus": "CERT",
+            "taxIdentificationNumber": "$.personalDetails.spouseTin",
+            "certificationDate": {
+              "type": "function",
+              "function": "$formatDate",
+              "sourcePath": "$.partyDetails.tinCertificationDate",
+              "args": ["yyyy-MM-dd"]
+            },
+            "backupWithholdingExempt": true
+          }
+        ]
+      },
+      "contactDetails": {
+        "partyContactDetailsList": {
+          "type": "array",
+          "sourcePath": "$.phoneDetails",
+          "itemMapping": {
+            "mediaType": "MBL",
+            "line1": "$.phoneNumber",
+            "preferred": true
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,86 @@
+{
+  "cartId": {
+    "type": "function",
+    "function": "$uuid"
+  },
+  "cartNote": "$.note",
+  "currency": "$.currency",
+  "totalAmount": {
+    "type": "function",
+    "sourcePath": "$.total_price",
+    "function": "$number",
+    "args": [2]
+  },
+  "discountAmount": {
+    "type": "function",
+    "sourcePath": "$.total_discount",
+    "function": "$number",
+    "args": [2]
+  },
+  "itemCount": "$.item_count",
+  "requiresShipping": "$.requires_shipping",
+  "items": {
+    "type": "array",
+    "sourcePath": "$.items",
+    "itemMapping": {
+      "id": "$.id",
+      "title": "$.product_title",
+      "variant": {
+        "type": "conditional",
+        "conditions": [
+          {
+            "path": "$.variant_title",
+            "operator": "ne",
+            "value": null,
+            "result": "$.variant_title"
+          }
+        ],
+        "default": "Default"
+      },
+      "quantity": "$.quantity",
+      "unitPrice": {
+        "type": "function",
+        "sourcePath": "$.original_price",
+        "function": "$number",
+        "args": [2]
+      },
+      "totalPrice": {
+        "type": "function",
+        "sourcePath": "$.final_line_price",
+        "function": "$number",
+        "args": [2]
+      },
+      "isGiftCard": "$.gift_card",
+      "productType": "$.product_type",
+      "sku": "$.sku",
+      "vendor": "$.vendor",
+      "requiresShipping": "$.requires_shipping",
+      "imageUrl": "$.image",
+      "properties": "$.properties",
+      "discounts": {
+        "type": "array",
+        "sourcePath": "$.discounts",
+        "itemMapping": {
+          "title": "$.title",
+          "amount": {
+            "type": "function",
+            "sourcePath": "$.amount",
+            "function": "$number",
+            "args": [2]
+          }
+        }
+      },
+      "status": {
+        "type": "value",
+        "sourcePath": "$.quantity",
+        "mappings": [
+          {
+            "source": "0",
+            "target": "OUT_OF_STOCK"
+          }
+        ],
+        "default": "IN_STOCK"
+      }
+    }
+  }
+}

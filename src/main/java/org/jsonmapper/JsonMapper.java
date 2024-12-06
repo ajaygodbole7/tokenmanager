@@ -129,9 +129,32 @@ public class JsonMapper {
 
   /** Process individual mapping rule */
   private Object processRule(JsonNode source, JsonNode rule) {
+    /*
     if (rule.isTextual()) {
+
       // Direct JsonPath mapping
       return evaluateJsonPath(source, rule.asText());
+    }
+     */
+    if (rule.isTextual()) {
+      String value = rule.asText();
+      // If starts with $, treat as JsonPath and handle null case
+      if (value.startsWith("$")) {
+        try {
+          Object result = evaluateJsonPath(source, value);
+          // If path doesn't exist, return null instead of throwing error
+          return result;
+        } catch (PathNotFoundException e) {
+          return null;
+        }
+      }
+      // For direct string values, return as-is
+      return value;
+    }
+
+    if (rule.isBoolean()) {
+      // Direct Boolean mapping
+      return rule.asBoolean();
     }
 
     if (!rule.has("type")) {
@@ -143,81 +166,112 @@ public class JsonMapper {
       case "function" -> processFunctionMapping(source, rule);
       case "conditional" -> processConditionalMapping(source, rule);
       case "array" -> processArrayMapping(source, rule);
+      case "object" -> processObjectMapping(source, rule);
       default ->
-          throw new JsonTransformationException(
-              "Unknown mapping type: " + rule.get("type").asText());
+          throw new JsonTransformationException("Unknown mapping type: " + rule.get("type").asText());
     };
+  }
+
+  private Object processObjectMapping(JsonNode source, JsonNode rule) {
+    logger.debug("Processing object mapping: {}", rule);
+
+    if (!rule.isObject()) {
+      throw new JsonTransformationException("Object mapping rule must be a JSON object.");
+    }
+
+    ObjectNode result = objectMapper.createObjectNode();
+
+    rule.fields().forEachRemaining(entry -> {
+      String fieldName = entry.getKey();
+      JsonNode fieldRule = entry.getValue();
+
+      if ("type".equals(fieldName)) {
+        // Skip the "type" key itself
+        return;
+      }
+
+      try {
+        logger.debug("Processing field: {}", fieldName);
+        Object mappedValue = processRule(source, fieldRule);
+        addToResult(result, fieldName, mappedValue);
+      } catch (Exception e) {
+        logger.error("Failed to process field: {}", fieldName, e);
+        throw new JsonTransformationException("Failed to process field: " + fieldName, e);
+      }
+    });
+
+    return result;
   }
 
   /** Process value mapping */
   /*
-  private Object processValueMapping(JsonNode source, JsonNode rule) {
-    logger.debug("Processing value mapping");
-    validateRule(rule, "sourcePath");
+    private Object processValueMapping(JsonNode source, JsonNode rule) {
+      logger.debug("Processing value mapping");
+      validateRule(rule, "sourcePath");
 
-    String sourcePath = rule.get("sourcePath").asText();
-    Object sourceValue = evaluateJsonPath(source, sourcePath);
+      String sourcePath = rule.get("sourcePath").asText();
+      Object sourceValue = evaluateJsonPath(source, sourcePath);
 
-    if (sourceValue == null) {
-      return rule.has("default") ? rule.get("default").asText() : null;
+      if (sourceValue == null) {
+        return rule.has("default") ? rule.get("default").asText() : null;
+      }
+
+      if (!rule.has("mappings")) {
+        return sourceValue;
+      }
+
+      JsonNode mappings = rule.get("mappings");
+      String sourceValueStr = String.valueOf(sourceValue);
+
+      if (mappings.isArray()) {
+        for (JsonNode mapping : mappings) {
+          if (mapping.get("source").asText().equals(sourceValueStr)) {
+            return mapping.get("target");
+          }
+        }
+      } else if (mappings.isObject() && mappings.has(sourceValueStr)) {
+        return mappings.get(sourceValueStr);
+      }
+
+      return rule.has("default") ? rule.get("default") : null;
     }
 
-    if (!rule.has("mappings")) {
-      return sourceValue;
-    }
+    private Object processValueMapping(JsonNode source, JsonNode rule) {
+      logger.info("Processing value mapping");
+      validateRule(rule, "sourcePath");
 
-    JsonNode mappings = rule.get("mappings");
-    String sourceValueStr = String.valueOf(sourceValue);
+      String sourcePath = rule.get("sourcePath").asText();
+      Object sourceValue = evaluateJsonPath(source, sourcePath);
 
-    if (mappings.isArray()) {
-      for (JsonNode mapping : mappings) {
-        if (mapping.get("source").asText().equals(sourceValueStr)) {
-          return mapping.get("target");
+      logger.info("Resolved source value: {}", sourceValue);
+
+      if (sourceValue == null) {
+        logger.info("Source value is null. Using default if available.");
+        return rule.has("default") ? rule.get("default").asText() : null;
+      }
+
+      // Convert the mappings to a Map for quick lookup
+      Map<String, String> mappingsMap = new HashMap<>();
+      if (rule.has("mappings") && rule.get("mappings").isArray()) {
+        for (JsonNode mapping : rule.get("mappings")) {
+          mappingsMap.put(mapping.get("source").asText(), mapping.get("target").asText());
         }
       }
-    } else if (mappings.isObject() && mappings.has(sourceValueStr)) {
-      return mappings.get(sourceValueStr);
-    }
 
-    return rule.has("default") ? rule.get("default") : null;
-  }
+      String sourceValueStr = unquoteString(String.valueOf(sourceValue));
+      logger.info("Source value as string: {}", sourceValueStr);
 
-  private Object processValueMapping(JsonNode source, JsonNode rule) {
-    logger.info("Processing value mapping");
-    validateRule(rule, "sourcePath");
+      // Check for a match in the mappings
+      if (mappingsMap.containsKey(sourceValueStr)) {
+        logger.info("Match found for sourceValue: {}, target: {}", sourceValueStr, mappingsMap.get(sourceValueStr));
+        return mappingsMap.get(sourceValueStr);
+      }
 
-    String sourcePath = rule.get("sourcePath").asText();
-    Object sourceValue = evaluateJsonPath(source, sourcePath);
-
-    logger.info("Resolved source value: {}", sourceValue);
-
-    if (sourceValue == null) {
-      logger.info("Source value is null. Using default if available.");
+      logger.info("No match found. Using default value.");
       return rule.has("default") ? rule.get("default").asText() : null;
     }
 
-    // Convert the mappings to a Map for quick lookup
-    Map<String, String> mappingsMap = new HashMap<>();
-    if (rule.has("mappings") && rule.get("mappings").isArray()) {
-      for (JsonNode mapping : rule.get("mappings")) {
-        mappingsMap.put(mapping.get("source").asText(), mapping.get("target").asText());
-      }
-    }
-
-    String sourceValueStr = unquoteString(String.valueOf(sourceValue));
-    logger.info("Source value as string: {}", sourceValueStr);
-
-    // Check for a match in the mappings
-    if (mappingsMap.containsKey(sourceValueStr)) {
-      logger.info("Match found for sourceValue: {}, target: {}", sourceValueStr, mappingsMap.get(sourceValueStr));
-      return mappingsMap.get(sourceValueStr);
-    }
-
-    logger.info("No match found. Using default value.");
-    return rule.has("default") ? rule.get("default").asText() : null;
-  }
-
-*/
+  */
   private Object processValueMapping(JsonNode source, JsonNode rule) {
     logger.info("Processing value mapping");
     validateRule(rule, "sourcePath");
@@ -234,7 +288,8 @@ public class JsonMapper {
 
     // Validate mappings
     if (!rule.has("mappings") || !rule.get("mappings").isArray()) {
-      throw new JsonTransformationException("Missing or invalid 'mappings' in rule for sourcePath: " + sourcePath);
+      throw new JsonTransformationException(
+          "Missing or invalid 'mappings' in rule for sourcePath: " + sourcePath);
     }
 
     // Convert mappings to a Map for quick lookup
@@ -250,7 +305,9 @@ public class JsonMapper {
       ArrayNode mappedArray = sourceArray.arrayNode();
       for (JsonNode element : sourceArray) {
         String elementStr = element.asText();
-        String mappedValue = mappingsMap.getOrDefault(elementStr, rule.has("default") ? rule.get("default").asText() : elementStr);
+        String mappedValue =
+            mappingsMap.getOrDefault(
+                elementStr, rule.has("default") ? rule.get("default").asText() : elementStr);
         mappedArray.add(mappedValue);
       }
       return mappedArray;
@@ -262,15 +319,16 @@ public class JsonMapper {
 
     // Check for a match in the mappings
     if (mappingsMap.containsKey(sourceValueStr)) {
-      logger.info("Match found for sourceValue: {}, target: {}", sourceValueStr, mappingsMap.get(sourceValueStr));
+      logger.info(
+          "Match found for sourceValue: {}, target: {}",
+          sourceValueStr,
+          mappingsMap.get(sourceValueStr));
       return mappingsMap.get(sourceValueStr);
     }
 
     logger.info("No match found. Using default value.");
     return rule.has("default") ? rule.get("default").asText() : null;
   }
-
-
 
   /** Utility to strip quotes from a string */
   private String unquoteString(String value) {
@@ -279,8 +337,6 @@ public class JsonMapper {
     }
     return value;
   }
-
-
 
   /** Process function mapping */
   private Object processFunctionMapping(JsonNode source, JsonNode rule) {
@@ -358,7 +414,10 @@ public class JsonMapper {
     // Handle default value same way as condition results
     if (rule.has("default")) {
       JsonNode defaultValue = rule.get("default");
-      if (defaultValue.isValueNode()) {
+      if (defaultValue.isTextual() && defaultValue.asText().startsWith("$.")) {
+        // Treat as JsonPath and evaluate
+        return evaluateJsonPath(source, defaultValue.asText());
+      } else if (defaultValue.isValueNode()) {
         return defaultValue.asText();
       } else if (defaultValue.isObject() && defaultValue.has("type")) {
         return processRule(source, defaultValue);
@@ -418,18 +477,30 @@ public class JsonMapper {
   }
 
   private void logMappingError(String sourcePath, JsonNode itemMapping, Exception e) {
-    logger.error("Failed to process array mapping for path: {} with error: {}", sourcePath, e.getMessage());
+    logger.error(
+        "Failed to process array mapping for path: {} with error: {}", sourcePath, e.getMessage());
     throw new JsonTransformationException(
-        String.format("Error processing array with sourcePath: %s and itemMapping: %s",
-                      sourcePath, itemMapping), e);
+        String.format(
+            "Error processing array with sourcePath: %s and itemMapping: %s",
+            sourcePath, itemMapping),
+        e);
   }
-
+/*
   private Object processArrayMapping(JsonNode source, JsonNode rule) {
     logger.debug("Processing array mapping");
     validateArrayMapping(rule);
 
     String sourcePath = rule.get("sourcePath").asText();
+    boolean wrapAsArray = rule.has("wrapAsArray") && rule.get("wrapAsArray").asBoolean();
     Object sourceValue = evaluateJsonPath(source, sourcePath);
+
+    // Handle wrapping single object as array if applicable
+    if (wrapAsArray && !(sourceValue instanceof List || sourceValue instanceof ArrayNode) && sourceValue != null) {
+      logger.info("Wrapping single source object into an array as required by the target mapping.");
+      ArrayNode wrappedArray = objectMapper.createArrayNode();
+      wrappedArray.add(objectMapper.valueToTree(sourceValue));
+      sourceValue = wrappedArray;
+    }
 
     if (!(sourceValue instanceof List || sourceValue instanceof ArrayNode)) {
       logger.warn("Source path resolved to a non-array: {}. Using fallback value.", sourcePath);
@@ -447,6 +518,14 @@ public class JsonMapper {
             .forEach(result::add);
       } else if (sourceValue instanceof ArrayNode array) {
         array.forEach(item -> result.add(createMappedItem(item, itemMapping)));
+      } else if (wrapAsArray && sourceValue instanceof Object) {
+        // Wrap single object into an array if wrapAsArray is true
+        logger.info("Wrapping single source object into an array as required by the target Mapping");
+        JsonNode itemNode = objectMapper.valueToTree(sourceValue);
+        JsonNode mappedItem = createMappedItem(itemNode, itemMapping);
+        result.add(mappedItem);
+      } else {
+        logger.warn("Source path resolved to a non-array or non-object: {}. Skipping array mapping.", sourcePath);
       }
     } catch (Exception e) {
       logMappingError(sourcePath, itemMapping, e);
@@ -455,32 +534,100 @@ public class JsonMapper {
     return result;
   }
 
+ */
+private Object processArrayMapping(JsonNode source, JsonNode rule) {
+  logger.debug("Processing array mapping for rule: {}", rule);
+  validateArrayMapping(rule);
+
+  String sourcePath = rule.get("sourcePath").asText();
+  boolean wrapAsArray = rule.has("wrapAsArray") && rule.get("wrapAsArray").asBoolean();
+  Object sourceValue = evaluateJsonPath(source, sourcePath);
+
+  // Convert to array if necessary
+  ArrayNode sourceArray = convertToArrayNode(sourceValue, wrapAsArray);
+  if (sourceArray == null) {
+    logger.warn("Source path '{}' did not resolve to a valid array or object. Returning empty array.", sourcePath);
+    return objectMapper.createArrayNode();
+  }
+
+  ArrayNode result = objectMapper.createArrayNode();
+  JsonNode itemMapping = rule.get("itemMapping");
+
+  // Map each item in the array
+  try {
+    sourceArray.forEach(item -> result.add(createMappedItem(item, itemMapping)));
+  } catch (Exception e) {
+    logger.error("Error processing array mapping for sourcePath '{}'", sourcePath, e);
+    throw new JsonTransformationException("Error processing array mapping for sourcePath: " + sourcePath, e);
+  }
+
+  return result;
+}
+
+  private ArrayNode convertToArrayNode(Object sourceValue, boolean wrapAsArray) {
+    if (sourceValue instanceof ArrayNode) {
+      return (ArrayNode) sourceValue;
+    }
+
+    if (sourceValue instanceof List<?>) {
+      ArrayNode arrayNode = objectMapper.createArrayNode();
+      ((List<?>) sourceValue).forEach(item -> arrayNode.add(objectMapper.valueToTree(item)));
+      return arrayNode;
+    }
+
+    if (wrapAsArray && sourceValue != null) {
+      logger.info("Wrapping single object into an array.");
+      ArrayNode arrayNode = objectMapper.createArrayNode();
+      arrayNode.add(objectMapper.valueToTree(sourceValue));
+      return arrayNode;
+    }
+
+    return null; // Invalid case
+  }
+
+
   private JsonNode createMappedItem(JsonNode sourceItem, JsonNode itemMapping) {
     logger.debug("Mapping array item: {}", sourceItem);
+
+    if (sourceItem == null || itemMapping == null) {
+      logger.warn("Source item or item mapping is null");
+      //Create an empty JsonNode object instead of failing, allowing the mapping process to continue
+      // with other valid items
+      return objectMapper.createObjectNode();
+    }
     ObjectNode mappedItem = objectMapper.createObjectNode();
 
-    itemMapping.fields().forEachRemaining(field -> {
-      String targetField = field.getKey();
-      JsonNode mappingRule = field.getValue();
+    itemMapping
+        .fields()
+        .forEachRemaining(
+            field -> {
+              String targetField = field.getKey();
+              JsonNode mappingRule = field.getValue();
 
-      try {
-        Object mappedValue;
-        // Direct JsonPath mapping using the field directly
-        if (mappingRule.isTextual()) {
-          mappedValue = evaluateJsonPath(sourceItem, mappingRule.asText());
-        } else {
-          // Complex mapping (value/function/conditional)
-          mappedValue = processRule(sourceItem, mappingRule);
-        }
+              try {
+                Object mappedValue;
+                // Direct JsonPath mapping using the field directly
+                if (mappingRule.isTextual()) {
+                  // mappedValue = evaluateJsonPath(sourceItem, mappingRule.asText());
+                  String value = mappingRule.asText();
+                  if (value.startsWith("$")) {
+                    mappedValue = evaluateJsonPath(sourceItem, value);
+                  } else {
+                    mappedValue = value;  // Direct string assignment
+                  }
+                } else {
+                  // Complex mapping (value/function/conditional)
+                  mappedValue = processRule(sourceItem, mappingRule);
+                }
 
-        if (mappedValue != null) {
-          addToResult(mappedItem, targetField, mappedValue);
-        }
-      } catch (Exception e) {
-        logger.error("Failed to map field: {}. Error: {}", targetField, e.getMessage());
-        throw new JsonTransformationException("Failed to process field: " + targetField, e);
-      }
-    });
+                if (mappedValue != null) {
+                  addToResult(mappedItem, targetField, mappedValue);
+                }
+              } catch (Exception e) {
+                logger.error("Failed to map field: {}. Error: {}", targetField, e.getMessage());
+                throw new JsonTransformationException("Failed to process field: " + targetField, e);
+              }
+            });
 
     return mappedItem;
   }
@@ -491,20 +638,41 @@ public class JsonMapper {
     }
     try {
       JsonPath compiledPath = pathCache.computeIfAbsent(path, p -> JsonPath.compile(p));
+
+      // Use configuration that returns null for missing leaf nodes but keeps other exceptions
+      Configuration config = Configuration.builder()
+          .options(Option.DEFAULT_PATH_LEAF_TO_NULL)
+          .build();
+
       Object result = compiledPath.read(source.toString());
 
+      // Handle null values
+      if (result == null) {
+        return null;
+      }
+
+      // Handle primitive types
+      if (result instanceof Boolean || result instanceof Number || result instanceof String) {
+        return result;
+      }
+
       // Check if the result is a JSON object, array, or primitive
-      if (result instanceof Map || result instanceof List || result instanceof String) {
+      if (result instanceof Map || result instanceof List) {
+        // if (result instanceof Map || result instanceof List || result instanceof String) {
         return objectMapper.valueToTree(result); // Convert to JsonNode
       }
 
+      // Fallback: Log and return as-is (or throw exception if unsupported)
+      logger.warn(
+          "Unexpected type returned from JsonPath: {} for path: {}", result.getClass(), path);
       return result;
 
     } catch (PathNotFoundException e) {
       logger.debug("Path not found: {}", path);
       return null;
     } catch (InvalidPathException e) {
-      throw new JsonTransformationException("Invalid JsonPath: " + path, e); // Pass InvalidPathException as cause
+      throw new JsonTransformationException(
+          "Invalid JsonPath: " + path, e); // Pass InvalidPathException as cause
     } catch (Exception e) {
       throw new JsonTransformationException("Failed to evaluate JsonPath: " + path, e);
     }
@@ -519,13 +687,15 @@ public class JsonMapper {
     JsonNode compareValue = condition.get("value");
 
     Object sourceValue = evaluateJsonPath(source, path);
-    //if (sourceValue == null) return false;
+    // if (sourceValue == null) return false;
 
     // For null comparisons with eq/ne, we want to proceed
     // For other operators, sourceValue must be non-null
     if (sourceValue == null) {
-      if (!"eq".equals(operator) && !"equals".equals(operator) &&
-          !"ne".equals(operator) && !"notEquals".equals(operator)) {
+      if (!"eq".equals(operator)
+          && !"equals".equals(operator)
+          && !"ne".equals(operator)
+          && !"notEquals".equals(operator)) {
         return false;
       }
     }
@@ -602,9 +772,7 @@ public class JsonMapper {
     }
   }
 
-  /**
-   * Add value to array
-   */
+  /** Add value to array */
   private void addToArray(ArrayNode array, Object value) {
     if (value == null) {
       array.addNull();
@@ -636,6 +804,7 @@ public class JsonMapper {
       array.add(value.toString());
     }
   }
+
   /** Validate rule contains required fields */
   private void validateRule(JsonNode rule, String... requiredFields) {
     for (String field : requiredFields) {
@@ -657,9 +826,11 @@ public class JsonMapper {
    */
   /**
    * Compares two values based on the desired comparison operator (eq/equals or ne/notEquals)
+   *
    * @param source The source value from JsonPath evaluation
    * @param target The target value from the mapping rule
-   * @param isEqualityCheck true if checking for equality (eq/equals), false if checking for inequality (ne/notEquals)
+   * @param isEqualityCheck true if checking for equality (eq/equals), false if checking for
+   *     inequality (ne/notEquals)
    * @return Returns true if the values match the desired comparison
    */
   private boolean compareValues(Object source, JsonNode target, boolean isEqualityCheck) {
@@ -680,7 +851,8 @@ public class JsonMapper {
 
     // Handle decimals/doubles - both sides must be doubles
     if (source instanceof Double && target.isDouble()) {
-      return isEqualityCheck == (Double.compare(((Double) source).doubleValue(), target.asDouble()) == 0);
+      return isEqualityCheck
+          == (Double.compare(((Double) source).doubleValue(), target.asDouble()) == 0);
     }
 
     // Handle strings - ensure both sides are treated as strings
@@ -699,7 +871,6 @@ public class JsonMapper {
     return !isEqualityCheck;
   }
 
-
   /** Compare numeric values */
   private int compareNumbers(Object source, JsonNode target) {
     BigDecimal sourceNum = new BigDecimal(String.valueOf(source));
@@ -711,43 +882,51 @@ public class JsonMapper {
     Map<String, BiFunction<Object, Object[], Object>> functions = new HashMap<>();
 
     // String Functions
-    //functions.put("$string", (ctx, args) -> unquoteString(String.valueOf(ctx)));
-    functions.put("$string", (ctx, args) -> {
-      if (ctx == null) {
-        return "";  // Return empty string for null input
-      }
-      return unquoteString(String.valueOf(ctx));
-    });
+    // functions.put("$string", (ctx, args) -> unquoteString(String.valueOf(ctx)));
+    functions.put(
+        "$string",
+        (ctx, args) -> {
+          if (ctx == null) {
+            return ""; // Return empty string for null input
+          }
+          return unquoteString(String.valueOf(ctx));
+        });
     functions.put("$uppercase", (ctx, args) -> unquoteString(String.valueOf(ctx)).toUpperCase());
     functions.put("$lowercase", (ctx, args) -> unquoteString(String.valueOf(ctx)).toLowerCase());
     functions.put("$trim", (ctx, args) -> unquoteString(String.valueOf(ctx)).trim());
-    functions.put("$substring", (ctx, args) -> {
-      String str = unquoteString(String.valueOf(ctx));
-      int start = args.length > 0 ? ((Number) args[0]).intValue() : 0;
-      int end = args.length > 1 ? ((Number) args[1]).intValue() : str.length();
-      return str.substring(Math.min(start, str.length()), Math.min(end, str.length()));
-    });
+    functions.put(
+        "$substring",
+        (ctx, args) -> {
+          String str = unquoteString(String.valueOf(ctx));
+          int start = args.length > 0 ? ((Number) args[0]).intValue() : 0;
+          int end = args.length > 1 ? ((Number) args[1]).intValue() : str.length();
+          return str.substring(Math.min(start, str.length()), Math.min(end, str.length()));
+        });
 
     // Numeric Functions
-   // functions.put("$number", (ctx, args) -> new BigDecimal(unquoteString(String.valueOf(ctx))));
+    // functions.put("$number", (ctx, args) -> new BigDecimal(unquoteString(String.valueOf(ctx))));
 
     // Numeric Functions
-    functions.put("$number", (ctx, args) -> {
-      if (ctx == null) {
-        return null;  // Return null for null input
-      }
-      try {
-        return new BigDecimal(unquoteString(String.valueOf(ctx)));
-      } catch (NumberFormatException e) {
-        return null;  // Return null for invalid number format
-      }
-    });
+    functions.put(
+        "$number",
+        (ctx, args) -> {
+          if (ctx == null) {
+            return null; // Return null for null input
+          }
+          try {
+            return new BigDecimal(unquoteString(String.valueOf(ctx)));
+          } catch (NumberFormatException e) {
+            return null; // Return null for invalid number format
+          }
+        });
 
-    functions.put("$round", (ctx, args) -> {
-      BigDecimal number = new BigDecimal(unquoteString(String.valueOf(ctx)));
-      int scale = args.length > 0 ? ((Number) args[0]).intValue() : 0;
-      return number.setScale(scale, RoundingMode.HALF_UP);
-    });
+    functions.put(
+        "$round",
+        (ctx, args) -> {
+          BigDecimal number = new BigDecimal(unquoteString(String.valueOf(ctx)));
+          int scale = args.length > 0 ? ((Number) args[0]).intValue() : 0;
+          return number.setScale(scale, RoundingMode.HALF_UP);
+        });
     functions.put("$sum", (ctx, args) -> calculateSum(ctx));
     /*
     functions.put("$sum", (ctx, args) -> {
@@ -763,40 +942,46 @@ public class JsonMapper {
      */
 
     // Date Functions
-    functions.put("$now", (ctx, args) -> LocalDateTime.now().format(DateTimeFormatter.ISO_DATE_TIME));
+    functions.put(
+        "$now", (ctx, args) -> LocalDateTime.now().format(DateTimeFormatter.ISO_DATE_TIME));
     /*
     functions.put("$formatDate", (ctx, args) -> {
       String format = args.length > 0 ? String.valueOf(args[0]) : "yyyy-MM-dd HH:mm:ss";
       return LocalDateTime.parse(unquoteString(String.valueOf(ctx))).format(DateTimeFormatter.ofPattern(format));
     });
     */
-    functions.put("$formatDate", (ctx, args) -> {
-      String inputDate = unquoteString(String.valueOf(ctx));
-      return formatToISO8601(inputDate);
-    });
+    functions.put(
+        "$formatDate",
+        (ctx, args) -> {
+          String inputDate = unquoteString(String.valueOf(ctx));
+          return formatToISO8601(inputDate);
+        });
 
     // Utility Functions
     functions.put("$uuid", (ctx, args) -> UUID.randomUUID().toString());
-    functions.put("$concat", (ctx, args) -> {
-      StringBuilder result = new StringBuilder();
-      // Include the resolved context value (ctx) only if it is a primitive value
-      if (ctx != null && !(ctx instanceof JsonNode && ((JsonNode) ctx).isContainerNode())) {
-        result.append(unquoteString(String.valueOf(ctx)));
-      }
-
-      for (Object arg : args) {
-        if (arg instanceof String && (((String) arg).startsWith("$.") || ((String) arg).startsWith("$["))) {
-          // Resolve the argument as a JsonPath
-          Object resolvedValue = evaluateJsonPath((JsonNode) ctx, (String) arg);
-          if (resolvedValue != null) {
-            result.append(unquoteString(resolvedValue.toString()));
+    functions.put(
+        "$concat",
+        (ctx, args) -> {
+          StringBuilder result = new StringBuilder();
+          // Include the resolved context value (ctx) only if it is a primitive value
+          if (ctx != null && !(ctx instanceof JsonNode && ((JsonNode) ctx).isContainerNode())) {
+            result.append(unquoteString(String.valueOf(ctx)));
           }
-        } else {
-          result.append(arg);
-        }
-      }
-      return result.toString();
-    });
+
+          for (Object arg : args) {
+            if (arg instanceof String
+                && (((String) arg).startsWith("$.") || ((String) arg).startsWith("$["))) {
+              // Resolve the argument as a JsonPath
+              Object resolvedValue = evaluateJsonPath((JsonNode) ctx, (String) arg);
+              if (resolvedValue != null) {
+                result.append(unquoteString(resolvedValue.toString()));
+              }
+            } else {
+              result.append(arg);
+            }
+          }
+          return result.toString();
+        });
 
     return functions;
   }
@@ -829,7 +1014,9 @@ public class JsonMapper {
         return evaluateJsonPath(currentContext, path);
       } else {
         // Relative path, evaluate within current context
-        return currentContext.path(path).isMissingNode() ? null : currentContext.path(path).asText();
+        return currentContext.path(path).isMissingNode()
+            ? null
+            : currentContext.path(path).asText();
       }
     } catch (Exception e) {
       logger.error("Failed to resolve path: {}", path, e);
@@ -838,21 +1025,23 @@ public class JsonMapper {
   }
 
   // Inside the same class
-  private static final List<DateTimeFormatter> ACCEPTABLE_FORMATS = List.of(
-      DateTimeFormatter.ISO_DATE_TIME,             // e.g., "2024-12-01T14:30:00Z"
-      DateTimeFormatter.ISO_INSTANT,              // e.g., "2024-12-01T14:30:00Z"
-      DateTimeFormatter.ofPattern("yyyy-MM-dd"),  // e.g., "2024-12-01"
-      DateTimeFormatter.ofPattern("dd-MM-yyyy"),  // e.g., "01-12-2024"
-      DateTimeFormatter.ofPattern("dd/MM/yyyy"),  // e.g., "01/12/2024"
-      DateTimeFormatter.ofPattern("MM-dd-yyyy"),  // e.g., "12-01-2024"
-      DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss"), // e.g., "2024/12/01 14:30:00"
-      DateTimeFormatter.ofPattern("yyyyMMdd"),    // e.g., "20241201"
-      DateTimeFormatter.ofPattern("dd-MM-yy"),    // e.g., "01-12-24"
-      DateTimeFormatter.ofPattern("HH:mm:ss"),    // e.g., "14:30:00" (interpreted with current date)
-      DateTimeFormatter.ofPattern("yyyyMMddHHmmss"), // e.g., "20241201143000"
-      DateTimeFormatter.ofPattern("MMM dd, yyyy"), // e.g., "Dec 01, 2024"
-      DateTimeFormatter.ofPattern("dd MMM yyyy")   // e.g., "01 Dec 2024"
-  );
+  private static final List<DateTimeFormatter> ACCEPTABLE_FORMATS =
+      List.of(
+          DateTimeFormatter.ISO_DATE_TIME, // e.g., "2024-12-01T14:30:00Z"
+          DateTimeFormatter.ISO_INSTANT, // e.g., "2024-12-01T14:30:00Z"
+          DateTimeFormatter.ofPattern("yyyy-MM-dd"), // e.g., "2024-12-01"
+          DateTimeFormatter.ofPattern("dd-MM-yyyy"), // e.g., "01-12-2024"
+          DateTimeFormatter.ofPattern("dd/MM/yyyy"), // e.g., "01/12/2024"
+          DateTimeFormatter.ofPattern("MM-dd-yyyy"), // e.g., "12-01-2024"
+          DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss"), // e.g., "2024/12/01 14:30:00"
+          DateTimeFormatter.ofPattern("yyyyMMdd"), // e.g., "20241201"
+          DateTimeFormatter.ofPattern("dd-MM-yy"), // e.g., "01-12-24"
+          DateTimeFormatter.ofPattern(
+              "HH:mm:ss"), // e.g., "14:30:00" (interpreted with current date)
+          DateTimeFormatter.ofPattern("yyyyMMddHHmmss"), // e.g., "20241201143000"
+          DateTimeFormatter.ofPattern("MMM dd, yyyy"), // e.g., "Dec 01, 2024"
+          DateTimeFormatter.ofPattern("dd MMM yyyy") // e.g., "01 Dec 2024"
+          );
 
   private String formatToISO8601(String inputDate) {
     for (DateTimeFormatter formatter : ACCEPTABLE_FORMATS) {
@@ -861,7 +1050,9 @@ public class JsonMapper {
 
         // If the input supports instant seconds (e.g., ISO_INSTANT)
         if (temporal.isSupported(ChronoField.INSTANT_SECONDS)) {
-          return Instant.from(temporal).atOffset(ZoneOffset.UTC).format(DateTimeFormatter.ISO_INSTANT);
+          return Instant.from(temporal)
+              .atOffset(ZoneOffset.UTC)
+              .format(DateTimeFormatter.ISO_INSTANT);
         }
 
         // If the input supports year and lacks time, add default time of 00:00:00
@@ -877,7 +1068,9 @@ public class JsonMapper {
     // If parsing as a string failed, try interpreting as milliseconds
     try {
       long epochMillis = Long.parseLong(inputDate);
-      return Instant.ofEpochMilli(epochMillis).atOffset(ZoneOffset.UTC).format(DateTimeFormatter.ISO_INSTANT);
+      return Instant.ofEpochMilli(epochMillis)
+          .atOffset(ZoneOffset.UTC)
+          .format(DateTimeFormatter.ISO_INSTANT);
     } catch (NumberFormatException ignored) {
       // Not a valid millisecond timestamp
     }
@@ -885,7 +1078,8 @@ public class JsonMapper {
     // Throw JsonTransformationException with the problematic input
     throw new JsonTransformationException("Invalid date format: " + inputDate);
   }
-// Unused
+
+  // Unused
   private String formatToCustomOrISO8601(String inputDate, String targetFormat) {
     for (DateTimeFormatter formatter : ACCEPTABLE_FORMATS) {
       try {
@@ -913,6 +1107,4 @@ public class JsonMapper {
       return Instant.now().atOffset(ZoneOffset.UTC).format(DateTimeFormatter.ISO_INSTANT);
     }
   }
-
-
 }

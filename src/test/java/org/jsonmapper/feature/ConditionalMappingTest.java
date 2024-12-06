@@ -1140,4 +1140,123 @@ class ConditionalMappingTest {
     assertThat(result.get("result").asText()).isEqualTo("NO_MATCH");
   }
 
+
+  @Test
+  @DisplayName("Should handle optional dates in Government ID mapping")
+  void shouldHandleOptionalDatesInGovtId() throws Exception {
+    // Test case 1: Both dates present - like a passport
+    String sourceJsonWithDates = """
+            {
+                "govtIds": [
+                    {
+                        "docType": "PASSPORT",
+                        "docNumber": "P123456",
+                        "dateIssued": "20240101",
+                        "dateExpires": "20290101"
+                    }
+                ]
+            }
+            """;
+
+    // Test case 2: Only issue date
+    String sourceJsonWithIssueDate = """
+            {
+                "govtIds": [
+                    {
+                        "docType": "DL",
+                        "docNumber": "DL789",
+                        "dateIssued": "20240101"
+                    }
+                ]
+            }
+            """;
+
+    // Test case 3: No dates
+    String sourceJsonNoDates = """
+            {
+                "govtIds": [
+                    {
+                        "docType": "ID",
+                        "docNumber": "ID456"
+                    }
+                ]
+            }
+            """;
+
+    String mappingJson = """
+            {
+                "documents": {
+                    "type": "array",
+                    "sourcePath": "$.govtIds",
+                    "itemMapping": {
+                        "documentType": {
+                            "type": "value",
+                            "sourcePath": "$.docType",
+                            "mappings": [
+                                {"source": "PASSPORT", "target": "PASS"},
+                                {"source": "DL", "target": "DRVLIC"},
+                                {"source": "ID", "target": "NATID"}
+                            ]
+                        },
+                        "documentNumber": "$.docNumber",
+                        "issueDate": {
+                            "type": "conditional",
+                            "conditions": [
+                                {
+                                    "path": "$.dateIssued",
+                                    "operator": "ne",
+                                    "value": null,
+                                    "result": {
+                                        "type": "function",
+                                        "function": "$formatDate",
+                                        "sourcePath": "$.dateIssued"
+                                    }
+                                }
+                            ]
+                        },
+                        "expiryDate": {
+                            "type": "conditional",
+                            "conditions": [
+                                {
+                                    "path": "$.dateExpires",
+                                    "operator": "ne",
+                                    "value": null,
+                                    "result": {
+                                        "type": "function",
+                                        "function": "$formatDate",
+                                        "sourcePath": "$.dateExpires"
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+            """;
+
+    // Test case 1: Both dates present (Passport)
+    JsonNode result1 = jsonMapper.transform(sourceJsonWithDates, getCleanJson(mappingJson));
+    JsonNode doc1 = result1.get("documents").get(0);
+    assertThat(doc1.get("documentType").asText()).isEqualTo("PASS");
+    assertThat(doc1.has("issueDate")).isTrue();
+    assertThat(doc1.has("expiryDate")).isTrue();
+    assertThat(doc1.get("issueDate").asText()).isEqualTo("2024-01-01T00:00:00Z");
+    assertThat(doc1.get("expiryDate").asText()).isEqualTo("2029-01-01T00:00:00Z");
+
+    // Test case 2: Only issue date (Driver's License)
+    JsonNode result2 = jsonMapper.transform(sourceJsonWithIssueDate, getCleanJson(mappingJson));
+    JsonNode doc2 = result2.get("documents").get(0);
+    assertThat(doc2.get("documentType").asText()).isEqualTo("DRVLIC");
+    assertThat(doc2.has("issueDate")).isTrue();
+    assertThat(doc2.has("expiryDate")).isFalse();
+    assertThat(doc2.get("issueDate").asText()).isEqualTo("2024-01-01T00:00:00Z");
+
+    // Test case 3: No dates (National ID)
+    JsonNode result3 = jsonMapper.transform(sourceJsonNoDates, getCleanJson(mappingJson));
+    JsonNode doc3 = result3.get("documents").get(0);
+    assertThat(doc3.get("documentType").asText()).isEqualTo("NATID");
+    assertThat(doc3.has("issueDate")).isFalse();
+    assertThat(doc3.has("expiryDate")).isFalse();
+  }
+
 }

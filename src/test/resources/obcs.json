@@ -1,0 +1,106 @@
+{
+  "applicationNumber": "STP21TEST00727551",
+  "cmcReplicationReq": true,
+  "hostHandoffReq": false,
+  "validationReq": false,
+  "notificationReq": true,
+  "retailPartyModel": [
+    {
+      "externalRefNo": "00000000145788",
+      "basicInfoAndCitizenshipDetails": {
+        "applicationNumber": "STP21TEST00727551",
+        "partyType": "I",
+        "title": "CA",
+        "firstName": "Gareth",
+        "lastName": "Smith Test4",
+        "dateOfBirth": "1980-01-01",
+        "partySubType": "INDIVIDUAL",
+        "nationality": "US",
+        "countryOfResidence": "US",
+        "residentStatus": "C",
+        "language": "ENG",
+        "isCustomer": true,
+        "isMinorCustomer": false
+      },
+      "currentAddressDetails": {
+        "partyContactDetailsList": [
+          {
+            "addressType": "C",
+            "buildingName": "A",
+            "streetName": "8214 MOCKINGBIRD DR",
+            "city": "ANNANDALE",
+            "state": "VA",
+            "zipCode": "22003",
+            "country": "US",
+            "isPreferred": true,
+            "location": "US",
+            "preferred": true,
+            "currentAddress": true,
+            "addressFrom": "2019-03-06"
+          }
+        ]
+      },
+      "idDetails": {
+        "partyIdInfoDetailsList": [
+          {
+            "idType": "PPT",
+            "idStatus": "AVL",
+            "uniqueId": "A234",
+            "placeOfIssue": "LA",
+            "validFrom": "2002-01-30",
+            "validTill": "2031-01-30",
+            "remarks": "ID card is valid",
+            "preferred": true
+          }
+        ]
+      },
+      "taxDeclarationDetails": {
+        "asOnDate": "2024-03-12",
+        "partyTaxInfoDetailsList": [
+          {
+            "formType": "W9",
+            "validFrom": "2024-09-20",
+            "validTill": null,
+            "taxIdentificationNumberType": "SSN",
+            "taxIdentificationNumberStatus": "CERT",
+            "taxIdentificationNumber": "234333321",
+            "foreignTaxIdentificationNumber": "sdfsd",
+            "certificationDate": "2024-03-26",
+            "backupWithholdingExempt": true,
+            "backupWithholdingCode": null,
+            "taxCountryCode": "ssd",
+            "taxProvinceCode": "czxxc",
+            "certificationCode": "FWT",
+            "backupWithholdingStoppage": "CPF",
+            "remarks": "ssc",
+            "partyTaxInfoNoticeDetailsList": [
+              {
+                "noticeType": "NCBF",
+                "noticeReceivedDate": "2020-05-26",
+                "noticeSentDate": "2020-05-26",
+                "complianceDate": "2020-05-26"
+              }
+            ]
+          }
+        ]
+      },
+      "contactDetails": {
+        "partyContactDetailsList": [
+          {
+            "mediaType": "EML",
+            "line1": "test123@test.com",
+            "contactSubType": "WRK",
+            "preferred": true
+          },
+          {
+            "mediaType": "MBL",
+            "line1": "+1",
+            "line2": "9847845214",
+            "preferred": true,
+            "contactSubType": "BUS"
+          }
+        ]
+      }
+    }
+  ]
+}
