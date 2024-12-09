@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import com.jayway.jsonpath.Configuration;
 import com.jayway.jsonpath.InvalidPathException;
 import com.jayway.jsonpath.JsonPath;
@@ -19,6 +21,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoField;
 import java.time.temporal.TemporalAccessor;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.function.BiFunction;
 import java.util.stream.StreamSupport;
 import org.apache.logging.log4j.LogManager;
@@ -33,7 +36,11 @@ public class JsonMapper {
   private final Configuration jsonPathConfig;
 
   // Cache commonly used JsonPath expressions
-  private final Map<String, JsonPath> pathCache;
+  //private final Map<String, JsonPath> pathCache;
+  private final Cache<String, JsonPath> pathCache = Caffeine.newBuilder()
+      .maximumSize(1000)
+      .expireAfterWrite(1, TimeUnit.HOURS)
+      .build();
 
   public JsonMapper() {
     logger.info("Initializing JsonMapper");
@@ -45,7 +52,7 @@ public class JsonMapper {
               .options(Option.DEFAULT_PATH_LEAF_TO_NULL)
               .options(Option.SUPPRESS_EXCEPTIONS)
               .build();
-      this.pathCache = new HashMap<>();
+      //this.pathCache = new HashMap<>();
     } catch (Exception e) {
       logger.error("Failed to initialize JsonMapper", e);
       throw new JsonTransformationException("Failed to initialize JsonMapper", e);
@@ -82,7 +89,7 @@ public class JsonMapper {
       throw new JsonTransformationException("Source JSON cannot be null or empty");
     }
 
-    if (mappingRules == null) {
+    if (mappingRules == null || mappingRules.isEmpty()) {
       throw new JsonTransformationException("Mapping rules cannot be null");
     }
 
@@ -637,8 +644,8 @@ private Object processArrayMapping(JsonNode source, JsonNode rule) {
       throw new IllegalArgumentException("Source JSON and path must not be null or empty.");
     }
     try {
-      JsonPath compiledPath = pathCache.computeIfAbsent(path, p -> JsonPath.compile(p));
-
+      //JsonPath compiledPath = pathCache.computeIfAbsent(path, p -> JsonPath.compile(p));
+      JsonPath compiledPath = pathCache.get(path, JsonPath::compile);
       // Use configuration that returns null for missing leaf nodes but keeps other exceptions
       Configuration config = Configuration.builder()
           .options(Option.DEFAULT_PATH_LEAF_TO_NULL)
@@ -1029,6 +1036,10 @@ private Object processArrayMapping(JsonNode source, JsonNode rule) {
       List.of(
           DateTimeFormatter.ISO_DATE_TIME, // e.g., "2024-12-01T14:30:00Z"
           DateTimeFormatter.ISO_INSTANT, // e.g., "2024-12-01T14:30:00Z"
+          DateTimeFormatter.ISO_LOCAL_DATE_TIME,
+          DateTimeFormatter.ISO_LOCAL_DATE,
+          DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"),
+          DateTimeFormatter.ofPattern("MM/dd/yyyy"),
           DateTimeFormatter.ofPattern("yyyy-MM-dd"), // e.g., "2024-12-01"
           DateTimeFormatter.ofPattern("dd-MM-yyyy"), // e.g., "01-12-2024"
           DateTimeFormatter.ofPattern("dd/MM/yyyy"), // e.g., "01/12/2024"
@@ -1036,8 +1047,7 @@ private Object processArrayMapping(JsonNode source, JsonNode rule) {
           DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss"), // e.g., "2024/12/01 14:30:00"
           DateTimeFormatter.ofPattern("yyyyMMdd"), // e.g., "20241201"
           DateTimeFormatter.ofPattern("dd-MM-yy"), // e.g., "01-12-24"
-          DateTimeFormatter.ofPattern(
-              "HH:mm:ss"), // e.g., "14:30:00" (interpreted with current date)
+          DateTimeFormatter.ofPattern("HH:mm:ss"), // e.g., "14:30:00" (interpreted with current date)
           DateTimeFormatter.ofPattern("yyyyMMddHHmmss"), // e.g., "20241201143000"
           DateTimeFormatter.ofPattern("MMM dd, yyyy"), // e.g., "Dec 01, 2024"
           DateTimeFormatter.ofPattern("dd MMM yyyy") // e.g., "01 Dec 2024"
@@ -1080,6 +1090,7 @@ private Object processArrayMapping(JsonNode source, JsonNode rule) {
   }
 
   // Unused
+  // Enhancement: allow specification of custom time format
   private String formatToCustomOrISO8601(String inputDate, String targetFormat) {
     for (DateTimeFormatter formatter : ACCEPTABLE_FORMATS) {
       try {
@@ -1107,4 +1118,16 @@ private Object processArrayMapping(JsonNode source, JsonNode rule) {
       return Instant.now().atOffset(ZoneOffset.UTC).format(DateTimeFormatter.ISO_INSTANT);
     }
   }
+
+  // INPUT VALIDATION
+  // Add new validation methods
+  private void validateJsonPath(String path, String context) {
+    try {
+      JsonPath.compile(path);
+    } catch (InvalidPathException e) {
+      throw new JsonTransformationException(
+          String.format("Invalid JsonPath '%s' in context '%s'", path, context), e);
+    }
+  }
+
 }

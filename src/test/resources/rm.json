@@ -26,7 +26,122 @@
       "regionCd": "ITPL",
       "responsibleBranch": "RESBR",
       "openingBranch": "HDQ",
-      "resSpannedBranch": "RESBR"
-    }
+      "resSpannedBranch": "RESBR",
+      "marketingOfficer": "RMGR1",
+      "tinCertificationCode": "1",
+      "nraCertificationCode": "1",
+      "tinCertificationDate": "20011020",
+      "nraCertificationDate": "20100729",
+      "backupWithholdingCode": "0",
+      "customerUser1": "QCAP AQ11",
+      "customerUser2": "GOOD",
+      "customerUser4": "19990517",
+      "customerScGroupCode": "A",
+      "employmentStatus": "A",
+      "originCode": "Q",
+      "payRank": "CAP",
+      "payRate": "Q11",
+      "internetBankIndicator": "N"
+    },
+    "personalDetails": {
+      "dateOfBirth": "20060923",
+      "maritalStatus": "M",
+      "genderCode": "M",
+      "instOfficerEmployeeDirector": "A",
+      "spouseTin": "435678941",
+      "nationality": "US",
+      "spouseTinCd": "1"
+    },
+    "addressdetails": [
+      {
+        "addressActionCd": "A",
+        "addressType": "P",
+        "addressSequence": "000",
+        "addressTypeCd1": "BUS",
+        "addressLine1Type": "A",
+        "addressLine1": "47 WINDSOR CT",
+        "city": "LITTLE ROCK",
+        "state": "AR",
+        "zipCode": "72212",
+        "country": "US",
+        "isoAddressLanguageCd": "EN",
+        "addressLanguageGroup": "1",
+        "sourceOfAddress": "M",
+        "code1AddressOverride": "B"
+      }
+    ],
+    "employmentDetails": [
+      {
+        "employmentActionCd": "A",
+        "employerName": "NFCU",
+        "employmentStartDt": "20031023",
+        "employmentStopDt": "20091023",
+        "employerAddress": "820 FOLLIN LN SE",
+        "employerCityStateZip": "VIENNA, VA 22180",
+        "employerPh": "080-41443123",
+        "jobTitle": "ANALYST",
+        "occupationCode": "MGR",
+        "salary": "0000000000060000",
+        "salaryCurrencyCd": "USD",
+        "employerPhoneExt": "3111"
+      }
+    ],
+    "identificationdetails": [
+      {
+        "idActionCd": "A",
+        "idType": "TN",
+        "idNumber": "929-59-4498",
+        "customerIdCode": "2",
+        "customerIdOtherInfo": "FISH"
+      },
+      {
+        "idActionCd": "A",
+        "idType": "MI",
+        "idNumber": "998604780001",
+        "customerIdOtherInfo": "VISA"
+      },
+      {
+        "idActionCd": "A",
+        "idType": "PP",
+        "idNumber": "998604780001",
+        "customerIdOtherInfo": "TIN",
+        "validTill": "20101020",
+        "issueDate": "20011020",
+        "idVerificationDate": "20090923"
+      }
+    ],
+    "nameDetails": {
+      "nameActionCd": "A",
+      "nameLine1": "KEN T SMITH",
+      "isoNameLanguageCd": "EN",
+      "nameLanguageGroupCd": "1",
+      "shortName": "TEST",
+      "firstName": "KEN",
+      "middleName": "T",
+      "lastName": "SMITH"
+    },
+    "phoneDetails": [
+      {
+        "phoneActionCd": "A",
+        "phoneTypeCd": "B",
+        "phoneNumber": "7043335445",
+        "phoneTimeZone": "C",
+        "phoneUsaInd": "Y",
+        "phoneSequencecode": "01",
+        "phoneCallsAllowedInd": "N",
+        "phoneRecordID": "000989076",
+        "phoneAssociatedFlag": "Y",
+        "phoneUpdatedBy": "V1499",
+        "phoneUpdatedTime": "2024-10-30-10.59.53.902642",
+        "phoneUserId": "CICSUNK"
+      }
+    ],
+    "contactDetails": [
+      {
+        "contactActionCd": "A",
+        "contactPhone": "7043335445",
+        "contactReason": "E"
+      }
+    ]
   }
 }

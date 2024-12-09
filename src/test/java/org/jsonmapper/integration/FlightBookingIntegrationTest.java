@@ -52,12 +52,15 @@ class FlightBookingIntegrationTest {
   @Test
   @DisplayName("Should correctly transform flight booking JSON")
   void shouldTransformFlightBooking() throws Exception {
-    String sourceJson = loadResource("src/test/resources/flight-input.json");
-    String mappingJson = loadResource("src/test/resources/flight-mapping.json");
+    //String sourceJson = loadResource("src/test/resources/flight-input.json");
+    //String mappingJson = loadResource("src/test/resources/flight-mapping.json");
+
+    String sourceJson = loadResource("src/test/resources/rm.json");
+    String mappingJson = loadResource("src/test/resources/rm-to-obcs-mapping.json");
 
     JsonNode result = jsonMapper.transform(sourceJson, getCleanJson(mappingJson));
 
-    writeOutputToFile(result, "src/test/resources/transformed-flight.json");
+    writeOutputToFile(result, "src/test/resources/transformed-obcs.json");
     }
 
   private String loadResource(String path) throws Exception {
@@ -65,7 +68,7 @@ class FlightBookingIntegrationTest {
   }
 
   private void writeOutputToFile(JsonNode jsonNode, String outputPath) throws Exception {
-    java.nio.file.Files.createDirectories(java.nio.file.Paths.get("src/test/resources/output"));
+    java.nio.file.Files.createDirectories(java.nio.file.Paths.get("src/test/resources"));
     objectMapper.writerWithDefaultPrettyPrinter()
         .writeValue(new java.io.File(outputPath), jsonNode);
     System.out.println("Transformed output has been written to: " + outputPath);

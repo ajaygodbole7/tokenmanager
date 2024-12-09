@@ -1,0 +1,258 @@
+{
+  "applicationNumber": "STP21TEST00727551",
+  "cmcReplicationReq": true,
+  "hostHandoffReq": false,
+  "validationReq": false,
+  "notificationReq": true,
+  "retailPartyModel": {
+    "type": "array",
+    "wrapAsArray": true,
+    "sourcePath": "$.rmCoreSync",
+    "itemMapping": {
+      "externalRefNo": "$.partyID",
+      "basicInfoAndCitizenshipDetails": {
+        "type": "object",
+        "applicationNumber": "STP21TEST00727551",
+        "partyType": {
+          "type": "value",
+          "sourcePath": "$.partyDetails.partyType",
+          "mappings": [
+            {
+              "source": "P",
+              "target": "I"
+            }
+          ],
+          "default": "I"
+        },
+        "title": {
+          "type": "value",
+          "sourcePath": "$.partyDetails.partyOfficerPrimaryCd",
+          "mappings": [
+            {
+              "source": "RMGR",
+              "target": "CA"
+            },
+            {
+              "source": "MGR",
+              "target": "CA"
+            },
+            {
+              "source": "DIR",
+              "target": "DR"
+            },
+            {
+              "source": "VP",
+              "target": "VP"
+            }
+          ],
+          "default": "CA"
+        },
+        "firstName": "$.nameDetails.firstName",
+        "lastName": "$.nameDetails.lastName",
+        "dateOfBirth": {
+          "type": "conditional",
+          "conditions": [
+            {
+              "path": "$.personalDetails.dateOfBirth",
+              "operator": "ne",
+              "value": null,
+              "result": {
+                "type": "function",
+                "function": "$formatDate",
+                "sourcePath": "$.personalDetails.dateOfBirth"
+              }
+            }
+          ]
+        },
+        "partySubType": {
+          "type": "value",
+          "sourcePath": "$.partyDetails.partyType",
+          "mappings": [
+            {
+              "source": "P",
+              "target": "INDIVIDUAL"
+            },
+            {
+              "source": "C",
+              "target": "CORPORATE"
+            }
+          ],
+          "default": "INDIVIDUAL"
+        },
+        "nationality": "$.personalDetails.nationality",
+        "countryOfResidence": "$.addressdetails[0].country",
+        "residentStatus": {
+          "type": "value",
+          "sourcePath": "$.personalDetails.nationality",
+          "mappings": [
+            {
+              "source": "US",
+              "target": "C"
+            }
+          ],
+          "default": "C"
+        },
+        "language": {
+          "type": "value",
+          "sourcePath": "$.partyDetails.partySpokenLanguageCd",
+          "mappings": [
+            {
+              "source": "ENG",
+              "target": "ENG"
+            },
+            {
+              "source": "EN",
+              "target": "ENG"
+            }
+          ],
+          "default": "ENG"
+        },
+        "isCustomer": true,
+        "isMinorCustomer": {
+          "type": "conditional",
+          "conditions": [
+            {
+              "path": "$.personalDetails.dateOfBirth",
+              "operator": "gt",
+              "value": "20060101",
+              "result": true
+            }
+          ],
+          "default": false
+        }
+      },
+      "currentAddressDetails": {
+        "type": "object",
+        "partyContactDetailsList": {
+          "type": "array",
+          "sourcePath": "$.addressdetails",
+          "itemMapping": {
+            "addressType": {
+              "type": "value",
+              "sourcePath": "$.addressType",
+              "mappings": [
+                {
+                  "source": "P",
+                  "target": "C"
+                },
+                {
+                  "source": "B",
+                  "target": "C"
+                }
+              ],
+              "default": "C"
+            },
+            "buildingName": "$.addressLine1Type",
+            "streetName": "$.addressLine1",
+            "city": "$.city",
+            "state": "$.state",
+            "zipCode": "$.zipCode",
+            "country": "$.country",
+            "isPreferred": true,
+            "location": "$.country",
+            "preferred": true,
+            "currentAddress": true,
+            "addressFrom": "2019-03-06"
+          }
+        }
+      },
+      "idDetails": {
+        "type": "object",
+        "partyIdInfoDetailsList": {
+          "type": "array",
+          "sourcePath": "$.identificationdetails",
+          "itemMapping": {
+            "idType": {
+              "type": "value",
+              "sourcePath": "$.idType",
+              "mappings": [
+                {
+                  "source": "PP",
+                  "target": "PPT"
+                },
+                {
+                  "source": "TN",
+                  "target": "SSN"
+                },
+                {
+                  "source": "MI",
+                  "target": "MID"
+                }
+              ],
+              "default": "PPT"
+            },
+            "idStatus": "AVL",
+            "uniqueId": "$.idNumber",
+            "placeOfIssue": "LA",
+            "validFrom": {
+              "type": "conditional",
+              "conditions": [
+                {
+                  "path": "issueDate",
+                  "operator": "ne",
+                  "value": null,
+                  "result": {
+                    "type": "function",
+                    "function": "$formatDate",
+                    "sourcePath": "issueDate"
+                  }
+                }
+              ]
+            },
+            "validTill": {
+              "type": "conditional",
+              "conditions": [
+                {
+                  "path": "validTill",
+                  "operator": "ne",
+                  "value": null,
+                  "result": {
+                    "type": "function",
+                    "function": "$formatDate",
+                    "sourcePath": "validTill"
+                  }
+                }
+              ]
+            },
+            "remarks": "ID card is valid",
+            "preferred": true
+          }
+        }
+      },
+      "contactDetails": {
+        "type": "object",
+        "partyContactDetailsList": {
+          "type": "array",
+          "sourcePath": "$.phoneDetails",
+          "itemMapping": {
+            "mediaType": {
+              "type": "value",
+              "sourcePath": "$.phoneTypeCd",
+              "mappings": [
+                {
+                  "source": "B",
+                  "target": "MBL"
+                }
+              ],
+              "default": "MBL"
+            },
+            "line1": "+1",
+            "line2": "$.phoneNumber",
+            "preferred": true,
+            "contactSubType": {
+              "type": "value",
+              "sourcePath": "$.phoneTypeCd",
+              "mappings": [
+                {
+                  "source": "B",
+                  "target": "BUS"
+                }
+              ],
+              "default": "BUS"
+            }
+          }
+        }
+      }
+    }
+  }
+}
