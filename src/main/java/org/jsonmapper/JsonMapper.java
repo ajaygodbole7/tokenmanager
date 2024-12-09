@@ -36,11 +36,9 @@ public class JsonMapper {
   private final Configuration jsonPathConfig;
 
   // Cache commonly used JsonPath expressions
-  //private final Map<String, JsonPath> pathCache;
-  private final Cache<String, JsonPath> pathCache = Caffeine.newBuilder()
-      .maximumSize(1000)
-      .expireAfterWrite(1, TimeUnit.HOURS)
-      .build();
+  // private final Map<String, JsonPath> pathCache;
+  private final Cache<String, JsonPath> pathCache =
+      Caffeine.newBuilder().maximumSize(1000).expireAfterWrite(1, TimeUnit.HOURS).build();
 
   public JsonMapper() {
     logger.info("Initializing JsonMapper");
@@ -52,7 +50,7 @@ public class JsonMapper {
               .options(Option.DEFAULT_PATH_LEAF_TO_NULL)
               .options(Option.SUPPRESS_EXCEPTIONS)
               .build();
-      //this.pathCache = new HashMap<>();
+      // this.pathCache = new HashMap<>();
     } catch (Exception e) {
       logger.error("Failed to initialize JsonMapper", e);
       throw new JsonTransformationException("Failed to initialize JsonMapper", e);
@@ -175,7 +173,8 @@ public class JsonMapper {
       case "array" -> processArrayMapping(source, rule);
       case "object" -> processObjectMapping(source, rule);
       default ->
-          throw new JsonTransformationException("Unknown mapping type: " + rule.get("type").asText());
+          throw new JsonTransformationException(
+              "Unknown mapping type: " + rule.get("type").asText());
     };
   }
 
@@ -188,97 +187,31 @@ public class JsonMapper {
 
     ObjectNode result = objectMapper.createObjectNode();
 
-    rule.fields().forEachRemaining(entry -> {
-      String fieldName = entry.getKey();
-      JsonNode fieldRule = entry.getValue();
+    rule.fields()
+        .forEachRemaining(
+            entry -> {
+              String fieldName = entry.getKey();
+              JsonNode fieldRule = entry.getValue();
 
-      if ("type".equals(fieldName)) {
-        // Skip the "type" key itself
-        return;
-      }
+              if ("type".equals(fieldName)) {
+                // Skip the "type" key itself
+                return;
+              }
 
-      try {
-        logger.debug("Processing field: {}", fieldName);
-        Object mappedValue = processRule(source, fieldRule);
-        addToResult(result, fieldName, mappedValue);
-      } catch (Exception e) {
-        logger.error("Failed to process field: {}", fieldName, e);
-        throw new JsonTransformationException("Failed to process field: " + fieldName, e);
-      }
-    });
+              try {
+                logger.debug("Processing field: {}", fieldName);
+                Object mappedValue = processRule(source, fieldRule);
+                addToResult(result, fieldName, mappedValue);
+              } catch (Exception e) {
+                logger.error("Failed to process field: {}", fieldName, e);
+                throw new JsonTransformationException("Failed to process field: " + fieldName, e);
+              }
+            });
 
     return result;
   }
 
   /** Process value mapping */
-  /*
-    private Object processValueMapping(JsonNode source, JsonNode rule) {
-      logger.debug("Processing value mapping");
-      validateRule(rule, "sourcePath");
-
-      String sourcePath = rule.get("sourcePath").asText();
-      Object sourceValue = evaluateJsonPath(source, sourcePath);
-
-      if (sourceValue == null) {
-        return rule.has("default") ? rule.get("default").asText() : null;
-      }
-
-      if (!rule.has("mappings")) {
-        return sourceValue;
-      }
-
-      JsonNode mappings = rule.get("mappings");
-      String sourceValueStr = String.valueOf(sourceValue);
-
-      if (mappings.isArray()) {
-        for (JsonNode mapping : mappings) {
-          if (mapping.get("source").asText().equals(sourceValueStr)) {
-            return mapping.get("target");
-          }
-        }
-      } else if (mappings.isObject() && mappings.has(sourceValueStr)) {
-        return mappings.get(sourceValueStr);
-      }
-
-      return rule.has("default") ? rule.get("default") : null;
-    }
-
-    private Object processValueMapping(JsonNode source, JsonNode rule) {
-      logger.info("Processing value mapping");
-      validateRule(rule, "sourcePath");
-
-      String sourcePath = rule.get("sourcePath").asText();
-      Object sourceValue = evaluateJsonPath(source, sourcePath);
-
-      logger.info("Resolved source value: {}", sourceValue);
-
-      if (sourceValue == null) {
-        logger.info("Source value is null. Using default if available.");
-        return rule.has("default") ? rule.get("default").asText() : null;
-      }
-
-      // Convert the mappings to a Map for quick lookup
-      Map<String, String> mappingsMap = new HashMap<>();
-      if (rule.has("mappings") && rule.get("mappings").isArray()) {
-        for (JsonNode mapping : rule.get("mappings")) {
-          mappingsMap.put(mapping.get("source").asText(), mapping.get("target").asText());
-        }
-      }
-
-      String sourceValueStr = unquoteString(String.valueOf(sourceValue));
-      logger.info("Source value as string: {}", sourceValueStr);
-
-      // Check for a match in the mappings
-      if (mappingsMap.containsKey(sourceValueStr)) {
-        logger.info("Match found for sourceValue: {}, target: {}", sourceValueStr, mappingsMap.get(sourceValueStr));
-        return mappingsMap.get(sourceValueStr);
-      }
-
-      logger.info("No match found. Using default value.");
-      return rule.has("default") ? rule.get("default").asText() : null;
-    }
-
-  */
   private Object processValueMapping(JsonNode source, JsonNode rule) {
     logger.info("Processing value mapping");
     validateRule(rule, "sourcePath");
@@ -372,27 +305,6 @@ public class JsonMapper {
   }
 
   /** Process conditional mapping */
-  /*
-  private Object processConditionalMapping(JsonNode source, JsonNode rule) {
-    logger.debug("Processing conditional mapping");
-    validateRule(rule, "conditions");
-
-    JsonNode conditions = rule.get("conditions");
-    if (!conditions.isArray()) {
-      throw new JsonTransformationException("Conditions must be an array");
-    }
-
-    for (JsonNode condition : conditions) {
-      if (evaluateCondition(source, condition)) {
-        return processRule(source, condition.get("result"));
-      }
-    }
-
-    return rule.has("default") ? processRule(source, rule.get("default")) : null;
-  }
-
-   */
-
   private Object processConditionalMapping(JsonNode source, JsonNode rule) {
     logger.debug("Processing conditional mapping");
     validateRule(rule, "conditions");
@@ -436,38 +348,6 @@ public class JsonMapper {
     return null;
   }
 
-  /** Process array mapping */
-  /*
-  private Object processArrayMapping(JsonNode source, JsonNode rule) {
-    logger.debug("Processing array mapping");
-    validateRule(rule, "sourcePath");
-
-    String sourcePath = rule.get("sourcePath").asText();
-    Object sourceValue = evaluateJsonPath(source, sourcePath);
-
-    if (!(sourceValue instanceof List || sourceValue instanceof ArrayNode)) {
-      throw new JsonTransformationException("Array mapping source must resolve to an array");
-    }
-
-    ArrayNode result = objectMapper.createArrayNode();
-    JsonNode itemMapping = rule.get("itemMapping");
-
-    if (sourceValue instanceof List<?> list) {
-      for (Object item : list) {
-        Object transformedItem = processRule(objectMapper.valueToTree(item), itemMapping);
-        addToArray(result, transformedItem);
-      }
-    } else if (sourceValue instanceof ArrayNode array) {
-      for (JsonNode item : array) {
-        Object transformedItem = processRule(item, itemMapping);
-        addToArray(result, transformedItem);
-      }
-    }
-
-    return result;
-  }
-  */
-
   private void validateArrayMapping(JsonNode rule) {
     validateRule(rule, "sourcePath", "itemMapping");
     JsonNode itemMapping = rule.get("itemMapping");
@@ -492,84 +372,38 @@ public class JsonMapper {
             sourcePath, itemMapping),
         e);
   }
-/*
+
   private Object processArrayMapping(JsonNode source, JsonNode rule) {
-    logger.debug("Processing array mapping");
+    logger.debug("Processing array mapping for rule: {}", rule);
     validateArrayMapping(rule);
 
     String sourcePath = rule.get("sourcePath").asText();
     boolean wrapAsArray = rule.has("wrapAsArray") && rule.get("wrapAsArray").asBoolean();
     Object sourceValue = evaluateJsonPath(source, sourcePath);
 
-    // Handle wrapping single object as array if applicable
-    if (wrapAsArray && !(sourceValue instanceof List || sourceValue instanceof ArrayNode) && sourceValue != null) {
-      logger.info("Wrapping single source object into an array as required by the target mapping.");
-      ArrayNode wrappedArray = objectMapper.createArrayNode();
-      wrappedArray.add(objectMapper.valueToTree(sourceValue));
-      sourceValue = wrappedArray;
-    }
-
-    if (!(sourceValue instanceof List || sourceValue instanceof ArrayNode)) {
-      logger.warn("Source path resolved to a non-array: {}. Using fallback value.", sourcePath);
+    // Convert to array if necessary
+    ArrayNode sourceArray = convertToArrayNode(sourceValue, wrapAsArray);
+    if (sourceArray == null) {
+      logger.warn(
+          "Source path '{}' did not resolve to a valid array or object. Returning empty array.",
+          sourcePath);
       return objectMapper.createArrayNode();
     }
 
     ArrayNode result = objectMapper.createArrayNode();
     JsonNode itemMapping = rule.get("itemMapping");
 
+    // Map each item in the array
     try {
-      if (sourceValue instanceof List<?> list) {
-        list.stream()
-            .map(this::ensureJsonNode)
-            .map(item -> createMappedItem(item, itemMapping))
-            .forEach(result::add);
-      } else if (sourceValue instanceof ArrayNode array) {
-        array.forEach(item -> result.add(createMappedItem(item, itemMapping)));
-      } else if (wrapAsArray && sourceValue instanceof Object) {
-        // Wrap single object into an array if wrapAsArray is true
-        logger.info("Wrapping single source object into an array as required by the target Mapping");
-        JsonNode itemNode = objectMapper.valueToTree(sourceValue);
-        JsonNode mappedItem = createMappedItem(itemNode, itemMapping);
-        result.add(mappedItem);
-      } else {
-        logger.warn("Source path resolved to a non-array or non-object: {}. Skipping array mapping.", sourcePath);
-      }
+      sourceArray.forEach(item -> result.add(createMappedItem(item, itemMapping)));
     } catch (Exception e) {
-      logMappingError(sourcePath, itemMapping, e);
+      logger.error("Error processing array mapping for sourcePath '{}'", sourcePath, e);
+      throw new JsonTransformationException(
+          "Error processing array mapping for sourcePath: " + sourcePath, e);
     }
 
     return result;
   }
-
- */
-private Object processArrayMapping(JsonNode source, JsonNode rule) {
-  logger.debug("Processing array mapping for rule: {}", rule);
-  validateArrayMapping(rule);
-
-  String sourcePath = rule.get("sourcePath").asText();
-  boolean wrapAsArray = rule.has("wrapAsArray") && rule.get("wrapAsArray").asBoolean();
-  Object sourceValue = evaluateJsonPath(source, sourcePath);
-
-  // Convert to array if necessary
-  ArrayNode sourceArray = convertToArrayNode(sourceValue, wrapAsArray);
-  if (sourceArray == null) {
-    logger.warn("Source path '{}' did not resolve to a valid array or object. Returning empty array.", sourcePath);
-    return objectMapper.createArrayNode();
-  }
-
-  ArrayNode result = objectMapper.createArrayNode();
-  JsonNode itemMapping = rule.get("itemMapping");
-
-  // Map each item in the array
-  try {
-    sourceArray.forEach(item -> result.add(createMappedItem(item, itemMapping)));
-  } catch (Exception e) {
-    logger.error("Error processing array mapping for sourcePath '{}'", sourcePath, e);
-    throw new JsonTransformationException("Error processing array mapping for sourcePath: " + sourcePath, e);
-  }
-
-  return result;
-}
 
   private ArrayNode convertToArrayNode(Object sourceValue, boolean wrapAsArray) {
     if (sourceValue instanceof ArrayNode) {
@@ -592,13 +426,13 @@ private Object processArrayMapping(JsonNode source, JsonNode rule) {
     return null; // Invalid case
   }
 
-
   private JsonNode createMappedItem(JsonNode sourceItem, JsonNode itemMapping) {
     logger.debug("Mapping array item: {}", sourceItem);
 
     if (sourceItem == null || itemMapping == null) {
       logger.warn("Source item or item mapping is null");
-      //Create an empty JsonNode object instead of failing, allowing the mapping process to continue
+      // Create an empty JsonNode object instead of failing, allowing the mapping process to
+      // continue
       // with other valid items
       return objectMapper.createObjectNode();
     }
@@ -620,7 +454,7 @@ private Object processArrayMapping(JsonNode source, JsonNode rule) {
                   if (value.startsWith("$")) {
                     mappedValue = evaluateJsonPath(sourceItem, value);
                   } else {
-                    mappedValue = value;  // Direct string assignment
+                    mappedValue = value; // Direct string assignment
                   }
                 } else {
                   // Complex mapping (value/function/conditional)
@@ -644,12 +478,11 @@ private Object processArrayMapping(JsonNode source, JsonNode rule) {
       throw new IllegalArgumentException("Source JSON and path must not be null or empty.");
     }
     try {
-      //JsonPath compiledPath = pathCache.computeIfAbsent(path, p -> JsonPath.compile(p));
+      // JsonPath compiledPath = pathCache.computeIfAbsent(path, p -> JsonPath.compile(p));
       JsonPath compiledPath = pathCache.get(path, JsonPath::compile);
       // Use configuration that returns null for missing leaf nodes but keeps other exceptions
-      Configuration config = Configuration.builder()
-          .options(Option.DEFAULT_PATH_LEAF_TO_NULL)
-          .build();
+      Configuration config =
+          Configuration.builder().options(Option.DEFAULT_PATH_LEAF_TO_NULL).build();
 
       Object result = compiledPath.read(source.toString());
 
@@ -821,16 +654,6 @@ private Object processArrayMapping(JsonNode source, JsonNode rule) {
     }
   }
 
-  /** Compare values for equality */
-  /*
-  private boolean compareValues(Object source, JsonNode target, boolean equals) {
-    if (source instanceof Number && target.isNumber()) {
-      return equals == (compareNumbers(source, target) == 0);
-    }
-
-    return equals == String.valueOf(source).equals(target.asText());
-  }
-   */
   /**
    * Compares two values based on the desired comparison operator (eq/equals or ne/notEquals)
    *
@@ -935,18 +758,6 @@ private Object processArrayMapping(JsonNode source, JsonNode rule) {
           return number.setScale(scale, RoundingMode.HALF_UP);
         });
     functions.put("$sum", (ctx, args) -> calculateSum(ctx));
-    /*
-    functions.put("$sum", (ctx, args) -> {
-      if (ctx instanceof Collection<?> list) {
-        return list.stream()
-            .filter(item -> item instanceof Number)
-            .map(item -> new BigDecimal(unquoteString(String.valueOf(item))))
-            .reduce(BigDecimal.ZERO, BigDecimal::add);
-      }
-      return BigDecimal.ZERO;
-    });
-
-     */
 
     // Date Functions
     functions.put(
@@ -1047,7 +858,8 @@ private Object processArrayMapping(JsonNode source, JsonNode rule) {
           DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss"), // e.g., "2024/12/01 14:30:00"
           DateTimeFormatter.ofPattern("yyyyMMdd"), // e.g., "20241201"
           DateTimeFormatter.ofPattern("dd-MM-yy"), // e.g., "01-12-24"
-          DateTimeFormatter.ofPattern("HH:mm:ss"), // e.g., "14:30:00" (interpreted with current date)
+          DateTimeFormatter.ofPattern(
+              "HH:mm:ss"), // e.g., "14:30:00" (interpreted with current date)
           DateTimeFormatter.ofPattern("yyyyMMddHHmmss"), // e.g., "20241201143000"
           DateTimeFormatter.ofPattern("MMM dd, yyyy"), // e.g., "Dec 01, 2024"
           DateTimeFormatter.ofPattern("dd MMM yyyy") // e.g., "01 Dec 2024"
@@ -1129,5 +941,4 @@ private Object processArrayMapping(JsonNode source, JsonNode rule) {
           String.format("Invalid JsonPath '%s' in context '%s'", path, context), e);
     }
   }
-
 }
