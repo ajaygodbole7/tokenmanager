@@ -801,6 +801,12 @@ public class JsonMapper {
           return result.toString();
         });
 
+    functions.put("$greetings", (ctx, args) -> {
+      ArrayNode greetingsArray = objectMapper.createArrayNode();
+      GREETINGS.forEach(greetingsArray::add);
+      return greetingsArray;
+    });
+
     return functions;
   }
 
@@ -941,4 +947,13 @@ public class JsonMapper {
           String.format("Invalid JsonPath '%s' in context '%s'", path, context), e);
     }
   }
+
+  private static final List<String> GREETINGS = List.of(
+      "Hello! How are you? Hope you have a wonderful day!",                                         // English
+      "ఏమండి, ఎలా ఉన్నావా, లైట్ తీస్కో",                                                // Telugu
+      "നമസ്കാരം! സുഖം ആണോ? നല്ല ദിവസം ആയിക്കോട്ടെ",                                  // Malayalam
+      "வணக்கம்! சௌக்கியமா? நாள் நல்லா அமையட்டும்",                                 // Tamil
+      "નમસ્તે! કેમ છો? તમારો દિવસ સરસ જાય",                                                      // Gujarati
+      "¡Hola! ¿Qué tal? ¡Qué tengas un excelente día!"                                     // Spanish
+  );
 }
