@@ -4,6 +4,10 @@
   "hostHandoffReq": false,
   "validationReq": false,
   "notificationReq": true,
+  "greetings": {
+    "type": "function",
+    "function": "$greetings"
+  },
   "retailPartyModel": {
     "type": "array",
     "wrapAsArray": true,
