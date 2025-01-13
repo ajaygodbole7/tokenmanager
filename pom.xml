@@ -4,13 +4,13 @@
   xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <groupId>org.jsonmapper</groupId>
-  <artifactId>jsonmapper</artifactId>
+  <groupId>org.tokenmanager</groupId>
+  <artifactId>tokenmanager</artifactId>
   <version>1.0.0-SNAPSHOT</version>
   <packaging>jar</packaging>
 
-  <name>JsonMapper</name>
-  <description>High-performance declarative JSON transformation library</description>
+  <name>TokenManager</name>
+  <description>High-performance Oauth2 Token Manager</description>
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -20,15 +20,17 @@
     <maven.compiler.target>${java.version}</maven.compiler.target>
 
     <!-- Core dependencies -->
-    <jackson.version>2.18.1</jackson.version>
-    <jsonpath.version>2.9.0</jsonpath.version>
+    <jackson.version>2.18.2</jackson.version>
     <log4j.version>2.24.2</log4j.version>
     <slf4j.version>2.0.16</slf4j.version>
-    <caffeine.version>3.1.8</caffeine.version>
+    <lombok.version>1.18.36</lombok.version>
+    <resilience4j.version>2.2.0</resilience4j.version>
+    <okhttp.version>5.0.0-alpha.14</okhttp.version>
 
     <!-- Test dependencies -->
     <junit.version>5.11.3</junit.version>
     <assertj.version>3.26.3</assertj.version>
+    <wiremock.version>3.10.0</wiremock.version>
   </properties>
 
   <dependencies>
@@ -40,18 +42,33 @@
       <scope>provided</scope>
     </dependency>
     <dependency>
-      <groupId>com.jayway.jsonpath</groupId>
-      <artifactId>json-path</artifactId>
-      <version>${jsonpath.version}</version>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-annotations</artifactId>
+      <version>${jackson.version}</version>
       <scope>provided</scope>
     </dependency>
-
-    <!-- Caching -->
     <dependency>
-      <groupId>com.github.ben-manes.caffeine</groupId>
-      <artifactId>caffeine</artifactId>
-      <version>${caffeine.version}</version>
+      <groupId>io.github.resilience4j</groupId>
+      <artifactId>resilience4j-all</artifactId>
+      <version>${resilience4j.version}</version>
     </dependency>
+    <dependency>
+      <groupId>io.github.resilience4j</groupId>
+      <artifactId>resilience4j-circuitbreaker</artifactId>
+      <version>${resilience4j.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.github.resilience4j</groupId>
+      <artifactId>resilience4j-retry</artifactId>
+      <version>${resilience4j.version}</version>
+    </dependency>
+
+    <dependency>
+      <groupId>com.squareup.okhttp3</groupId>
+      <artifactId>okhttp</artifactId>
+      <version>${okhttp.version}</version>
+    </dependency>
+
 
     <!-- Logging Dependencies -->
     <dependency>
@@ -79,6 +96,13 @@
       <scope>provided</scope>
     </dependency>
 
+    <dependency>
+      <groupId>org.projectlombok</groupId>
+      <artifactId>lombok</artifactId>
+      <version>${lombok.version}</version>
+      <scope>provided</scope>
+    </dependency>
+
     <!-- Test Dependencies -->
     <dependency>
       <groupId>org.junit.jupiter</groupId>
@@ -92,6 +116,26 @@
       <version>${assertj.version}</version>
       <scope>test</scope>
     </dependency>
+    <dependency>
+      <groupId>org.wiremock</groupId>
+      <artifactId>wiremock</artifactId>
+      <version>${wiremock.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.squareup.okhttp3</groupId>
+      <artifactId>mockwebserver</artifactId>
+      <version>${okhttp.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <!-- https://mvnrepository.com/artifact/com.squareup.okhttp3/okhttp-tls -->
+    <dependency>
+      <groupId>com.squareup.okhttp3</groupId>
+      <artifactId>okhttp-tls</artifactId>
+      <version>${okhttp.version}</version>
+      <scope>test</scope>
+    </dependency>
+
   </dependencies>
 
   <build>
@@ -114,25 +158,6 @@
         <artifactId>maven-surefire-plugin</artifactId>
         <version>3.5.2</version>
         <configuration>
-          <properties>
-            <!-- Enable parallel execution -->
-            <configurationParameters>
-              junit.jupiter.execution.parallel.enabled=true
-              junit.jupiter.execution.parallel.mode.default=concurrent
-              junit.jupiter.execution.parallel.mode.classes.default=concurrent
-              junit.jupiter.execution.parallel.config.strategy=dynamic
-              junit.jupiter.execution.parallel.config.dynamic.factor=2
-              junit.jupiter.execution.parallel.config.dynamic.max-pool-size=4
-            </configurationParameters>
-          </properties>
-          <!-- Optional: Specify the number of threads directly -->
-          <parallel>all</parallel>
-          <threadCount>4</threadCount>
-          <perCoreThreadCount>true</perCoreThreadCount>
-          <!-- Optional: Configure system properties -->
-          <systemPropertyVariables>
-            <junit.jupiter.execution.parallel.enabled>true</junit.jupiter.execution.parallel.enabled>
-          </systemPropertyVariables>
           <reportFormat>plain</reportFormat>
           <consoleOutputReporter>
             <disable>false</disable>
@@ -150,21 +175,6 @@
             <id>attach-sources</id>
             <goals>
               <goal>jar-no-fork</goal>
-            </goals>
-          </execution>
-        </executions>
-      </plugin>
-
-      <!-- Javadoc Plugin -->
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-javadoc-plugin</artifactId>
-        <version>3.11.1</version>
-        <executions>
-          <execution>
-            <id>attach-javadocs</id>
-            <goals>
-              <goal>jar</goal>
             </goals>
           </execution>
         </executions>

@@ -1,0 +1,76 @@
+{
+  "reservationId" : "FLIGHT-2024-001",
+  "bookingTime" : "2024-12-01",
+  "bookingStatus" : "Booking Confirmed",
+  "passengerDetails" : [ {
+    "passengerId" : "PAX1",
+    "fullName" : "MR JOHN DOE",
+    "type" : "Adult",
+    "seatPreference" : "WINDOW",
+    "specialRequests" : [ "WHEELCHAIR", "VEGETARIAN_MEAL" ]
+  }, {
+    "passengerId" : "PAX2",
+    "fullName" : "MISS JANE DOE",
+    "type" : "Child",
+    "seatPreference" : "NEXT_TO_PAX1",
+    "specialRequests" : [ "CHILD_MEAL" ]
+  } ],
+  "formattedBookingDate" : "2024-12-01T00:00:00Z",
+  "bookingStatusDetails" : "Confirmed VIP",
+  "frequentFlyerNumbers" : [ {
+    "frequentFlyerNumber" : "FF123456"
+  }, { } ],
+  "totalTaxes" : 150.0,
+  "flightRoutes" : [ {
+    "route" : "SFO - JFK"
+  }, {
+    "route" : "JFK - SFO"
+  } ],
+  "formattedFlightTimes" : [ {
+    "flightNumber" : "AI101",
+    "formattedDeparture" : "2024-12-15T10:30:00Z",
+    "formattedArrival" : "2024-12-15T19:00:00Z"
+  }, {
+    "flightNumber" : "AI102",
+    "formattedDeparture" : "2024-12-22T14:30:00Z",
+    "formattedArrival" : "2024-12-22T23:00:00Z"
+  } ],
+  "baggagePriority" : "LOW",
+  "seatPreferences" : [ {
+    "seatPreference" : "WINDOW"
+  }, {
+    "seatPreference" : "NEXT_TO_PAX1"
+  } ],
+  "flightSummaries" : [ {
+    "flightNumber" : "AI101",
+    "route" : "SFO - JFK",
+    "status" : "SCHEDULED",
+    "departureTime" : "2024-12-15T10:30:00Z",
+    "arrivalTime" : "2024-12-15T19:00:00Z"
+  }, {
+    "flightNumber" : "AI102",
+    "route" : "JFK - SFO",
+    "status" : "SCHEDULED",
+    "departureTime" : "2024-12-22T14:30:00Z",
+    "arrivalTime" : "2024-12-22T23:00:00Z"
+  } ],
+  "totalAllowedCheckedBags" : 4,
+  "passengersWithGeneratedIds" : [ {
+    "id" : "PAX1",
+    "generatedId" : "4d557181-60b1-4ce2-a542-bba6a95abbff"
+  }, {
+    "id" : "PAX2",
+    "generatedId" : "4cd9baae-a8b6-421d-ab51-1970cca74fbd"
+  } ],
+  "baggageAllowancePerPassenger" : [ {
+    "flightNumber" : "AI101",
+    "baggageAllowance" : "20",
+    "cabinBags" : 1,
+    "totalAllowance" : "50"
+  }, {
+    "flightNumber" : "AI102",
+    "baggageAllowance" : "20",
+    "cabinBags" : 1,
+    "totalAllowance" : "50"
+  } ]
+}

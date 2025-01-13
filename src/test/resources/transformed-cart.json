@@ -1,0 +1,48 @@
+{
+  "cartId" : "97765f9a-bd12-474a-ae40-b975a5655e39",
+  "cartNote" : "Hello!",
+  "currency" : "CAD",
+  "totalAmount" : 2925,
+  "discountAmount" : 474,
+  "itemCount" : 2,
+  "requiresShipping" : true,
+  "items" : [ {
+    "id" : "39897499729985",
+    "title" : "Health potion",
+    "variant" : "$.variant_title",
+    "quantity" : 1,
+    "unitPrice" : 900,
+    "totalPrice" : 900,
+    "isGiftCard" : false,
+    "productType" : "Health",
+    "sku" : "",
+    "vendor" : "Polina's Potent Potions",
+    "requiresShipping" : true,
+    "imageUrl" : "https://cdn.shopify.com/s/files/1/0561/7470/6753/files/science-beakers-blue-light-new.jpg?v=1683744744",
+    "properties" : { },
+    "discounts" : [ ],
+    "status" : "IN_STOCK"
+  }, {
+    "id" : "39888235757633",
+    "title" : "Whole bloodroot",
+    "variant" : "Default",
+    "quantity" : 1,
+    "unitPrice" : 2499,
+    "totalPrice" : 2249,
+    "isGiftCard" : false,
+    "productType" : "Fruits & Vegetables",
+    "sku" : "",
+    "vendor" : "Clover's Apothecary",
+    "requiresShipping" : true,
+    "imageUrl" : "https://cdn.shopify.com/s/files/1/0561/7470/6753/products/sweet-potato-pile.jpg?v=1650644893",
+    "properties" : { },
+    "discounts" : [ {
+      "title" : "Bloodroot discount!",
+      "amount" : 250
+    }, {
+      "title" : "Ingredient Sale",
+      "amount" : 224
+    } ],
+    "status" : "IN_STOCK"
+  } ]
+}

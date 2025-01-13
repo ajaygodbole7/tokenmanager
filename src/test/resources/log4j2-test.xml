@@ -13,7 +13,7 @@
             <AppenderRef ref="Console"/>
             <AppenderRef ref="File"/>
         </Root>
-        <Logger name="org.jsonmapper" level="DEBUG" additivity="false">
+        <Logger name="org.tokenmanager" level="DEBUG" additivity="false">
             <AppenderRef ref="Console"/>
             <AppenderRef ref="File"/>
         </Logger>

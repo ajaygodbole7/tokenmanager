@@ -1,0 +1,77 @@
+{
+  "applicationNumber" : "STP21TEST00727551",
+  "cmcReplicationReq" : true,
+  "hostHandoffReq" : false,
+  "validationReq" : false,
+  "notificationReq" : true,
+  "greetings" : [ "Hello! How are you? Hope you have a wonderful day!", "ఏమండి, ఎలా ఉన్నావా, లైట్ తీస్కో", "നമസ്കാരം! സുഖം ആണോ? നല്ല ദിവസം ആയിക്കോട്ടെ", "வணக்கம்! சௌக்கியமா? நாள் நல்லா அமையட்டும்", "નમસ્તે! કેમ છો? તમારો દિવસ સરસ જાય", "¡Hola! ¿Qué tal? ¡Qué tengas un excelente día!" ],
+  "retailPartyModel" : [ {
+    "externalRefNo" : "00000000185896",
+    "basicInfoAndCitizenshipDetails" : {
+      "applicationNumber" : "STP21TEST00727551",
+      "partyType" : "I",
+      "title" : "CA",
+      "firstName" : "KEN",
+      "lastName" : "SMITH",
+      "dateOfBirth" : "2006-09-23T00:00:00Z",
+      "partySubType" : "INDIVIDUAL",
+      "nationality" : "US",
+      "countryOfResidence" : "US",
+      "residentStatus" : "C",
+      "language" : "ENG",
+      "isCustomer" : true,
+      "isMinorCustomer" : "true"
+    },
+    "currentAddressDetails" : {
+      "partyContactDetailsList" : [ {
+        "addressType" : "C",
+        "buildingName" : "A",
+        "streetName" : "47 WINDSOR CT",
+        "city" : "LITTLE ROCK",
+        "state" : "AR",
+        "zipCode" : "72212",
+        "country" : "US",
+        "isPreferred" : true,
+        "location" : "US",
+        "preferred" : true,
+        "currentAddress" : true,
+        "addressFrom" : "2019-03-06"
+      } ]
+    },
+    "idDetails" : {
+      "partyIdInfoDetailsList" : [ {
+        "idType" : "SSN",
+        "idStatus" : "AVL",
+        "uniqueId" : "929-59-4498",
+        "placeOfIssue" : "LA",
+        "remarks" : "ID card is valid",
+        "preferred" : true
+      }, {
+        "idType" : "MID",
+        "idStatus" : "AVL",
+        "uniqueId" : "998604780001",
+        "placeOfIssue" : "LA",
+        "remarks" : "ID card is valid",
+        "preferred" : true
+      }, {
+        "idType" : "PPT",
+        "idStatus" : "AVL",
+        "uniqueId" : "998604780001",
+        "placeOfIssue" : "LA",
+        "validFrom" : "2001-10-20T00:00:00Z",
+        "validTill" : "2010-10-20T00:00:00Z",
+        "remarks" : "ID card is valid",
+        "preferred" : true
+      } ]
+    },
+    "contactDetails" : {
+      "partyContactDetailsList" : [ {
+        "mediaType" : "MBL",
+        "line1" : "+1",
+        "line2" : "7043335445",
+        "preferred" : true,
+        "contactSubType" : "BUS"
+      } ]
+    }
+  } ]
+}
