@@ -1,6 +1,6 @@
 package org.tokenmanager;
 
-public class InvalidEndpointException extends RuntimeException {
+public final class InvalidEndpointException extends TokenException {
   public InvalidEndpointException(String message) {
     super(message);
   }

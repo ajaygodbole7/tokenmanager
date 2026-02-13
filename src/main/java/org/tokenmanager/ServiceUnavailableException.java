@@ -1,6 +1,6 @@
 package org.tokenmanager;
 
-public class ServiceUnavailableException extends RuntimeException {
+public final class ServiceUnavailableException extends TokenException {
   public ServiceUnavailableException(String message) {
     super(message);
   }

@@ -1,6 +1,6 @@
 package org.tokenmanager;
 
-public class InvalidConfigurationException extends RuntimeException {
+public final class InvalidConfigurationException extends TokenException {
   public InvalidConfigurationException(String message) {
     super(message);
   }

@@ -1,6 +1,6 @@
 package org.tokenmanager;
 
-public class InvalidCredentialsException extends RuntimeException {
+public final class InvalidCredentialsException extends TokenException {
   public InvalidCredentialsException(String message) {
     super(message);
   }

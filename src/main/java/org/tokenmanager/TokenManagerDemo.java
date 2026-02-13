@@ -20,11 +20,11 @@ public class TokenManagerDemo {
         .build();
 
     // Create token manager instance
-    try (Oauth2TokenManager tokenManager = new Oauth2TokenManager(config)) {
-      // Create multiple threads that will request tokens
-      Thread thread1 = new Thread(() -> getTokenAndLog(tokenManager, "Thread-1"));
-      Thread thread2 = new Thread(() -> getTokenAndLog(tokenManager, "Thread-2"));
-      Thread thread3 = new Thread(() -> getTokenAndLog(tokenManager, "Thread-3"));
+    try (OAuth2TokenManager tokenManager = new OAuth2TokenManager(config)) {
+      // Create multiple virtual threads that will request tokens
+      Thread thread1 = Thread.ofVirtual().name("Thread-1").unstarted(() -> getTokenAndLog(tokenManager, "Thread-1"));
+      Thread thread2 = Thread.ofVirtual().name("Thread-2").unstarted(() -> getTokenAndLog(tokenManager, "Thread-2"));
+      Thread thread3 = Thread.ofVirtual().name("Thread-3").unstarted(() -> getTokenAndLog(tokenManager, "Thread-3"));
 
       // Start all threads
       thread1.start();
@@ -40,9 +40,9 @@ public class TokenManagerDemo {
       log.info("Waiting 5 seconds before requesting token again...");
       Thread.sleep(5000);
 
-      // Create new threads to demonstrate refresh behavior
-      Thread refresh1 = new Thread(() -> getTokenAndLog(tokenManager, "Refresh-1"));
-      Thread refresh2 = new Thread(() -> getTokenAndLog(tokenManager, "Refresh-2"));
+      // Create new virtual threads to demonstrate refresh behavior
+      Thread refresh1 = Thread.ofVirtual().name("Refresh-1").unstarted(() -> getTokenAndLog(tokenManager, "Refresh-1"));
+      Thread refresh2 = Thread.ofVirtual().name("Refresh-2").unstarted(() -> getTokenAndLog(tokenManager, "Refresh-2"));
 
       refresh1.start();
       refresh2.start();
@@ -54,7 +54,7 @@ public class TokenManagerDemo {
     }
   }
 
-  private static void getTokenAndLog(Oauth2TokenManager tokenManager, String threadName) {
+  private static void getTokenAndLog(OAuth2TokenManager tokenManager, String threadName) {
     try {
       String token = tokenManager.getToken();
       log.info("{} got token: {}...", threadName, maskToken(token));

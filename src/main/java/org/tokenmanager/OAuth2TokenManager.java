@@ -34,7 +34,7 @@ import okhttp3.Request;
 import okhttp3.Response;
 
 /**
- * Oauth2TokenManager is responsible for managing the lifecycle of OAuth2 tokens including:
+ * OAuth2TokenManager is responsible for managing the lifecycle of OAuth2 tokens including:
  * - Fetching and refreshing tokens from an OAuth2 server.
  * - Caching the token until near expiry.
  * - Providing concurrency control so that multiple callers do not trigger multiple simultaneous refreshes.
@@ -54,7 +54,7 @@ import okhttp3.Response;
  * - If multiple threads call `getToken()` and a refresh is needed, they all wait on the same future, ensuring that only one refresh is executed.
  */
 @Slf4j
-public class Oauth2TokenManager implements AutoCloseable {
+public class OAuth2TokenManager implements AutoCloseable {
 
   // Default configurations and constants
   private static final Duration DEFAULT_HTTP_TIMEOUT = Duration.ofSeconds(10);
@@ -88,20 +88,19 @@ public class Oauth2TokenManager implements AutoCloseable {
   private CompletableFuture<OAuth2Token> ongoingRefresh;
 
   /**
-   * Constructs an Oauth2TokenManager instance.
+   * Constructs an OAuth2TokenManager instance.
    *
    * @param config TokenConfig containing client credentials, endpoint, and other parameters.
    */
-  public Oauth2TokenManager(@NonNull TokenConfig config) {
+  public OAuth2TokenManager(@NonNull TokenConfig config) {
     config.validate();
     this.config = config;
 
     this.instanceId = generateInstanceId(config.getClientId());
-    //this.httpClient = createHttpClient(config.getHttpTimeout());
     this.httpClient = Optional.ofNullable(config.getHttpClient())
         .orElseGet(() -> createHttpClient(config.getHttpTimeout()));
     this.objectMapper = new ObjectMapper();
-    this.executor = Executors.newCachedThreadPool();
+    this.executor = Executors.newVirtualThreadPerTaskExecutor();
     this.circuitBreaker = createCircuitBreaker();
     this.retry = createRetry();
 
@@ -131,13 +130,8 @@ public class Oauth2TokenManager implements AutoCloseable {
    * @return A sanitized instance ID string
    */
   private static String generateInstanceId(String clientId) {
-    return String.format("oauth2-token-manager-%s", clientId.replaceAll("[^a-zA-Z0-9]", ""));
+    return "oauth2-token-manager-" + clientId.replaceAll("[^a-zA-Z0-9]", "");
   }
-
-  public static OAuth2Token invalidToken() {
-    return new OAuth2Token("INVALID", OAuth2TokenType.BEARER, Instant.EPOCH, Instant.EPOCH, Set.of());
-  }
-
 
   /**
    * Returns a valid OAuth2 token to the caller. If the current token is close to expiry or expired:
@@ -184,7 +178,7 @@ public class Oauth2TokenManager implements AutoCloseable {
   private void checkCircuitBreaker() {
     if (circuitBreaker.getState() == CircuitBreaker.State.OPEN) {
       throw new ServiceUnavailableException(
-          String.format("Service unavailable. Current token expires at: %s", currentToken.expiresAt()));
+          "Service unavailable. Current token expires at: " + currentToken.expiresAt());
     }
   }
 
@@ -375,7 +369,6 @@ public class Oauth2TokenManager implements AutoCloseable {
 
 
 
-  // New Code
   private void handleErrorResponse(Response response) throws IOException {
     String errorBody = readErrorBodySafely(response);
     JsonNode errorNode = tryParseErrorBody(errorBody);
@@ -472,8 +465,6 @@ public class Oauth2TokenManager implements AutoCloseable {
   }
 
 
-  //End New Code
-
   /**
    * Validates that required fields (access_token, expires_in) are present and valid.
    */
@@ -550,7 +541,7 @@ public class Oauth2TokenManager implements AutoCloseable {
         IntervalFunction.ofExponentialBackoff(INITIAL_RETRY_DELAY.toMillis());
 
     var retryConfig =
-        RetryConfig.<TokenInfo>custom()
+        RetryConfig.<OAuth2Token>custom()
             .maxAttempts(MAX_RETRY_ATTEMPTS)
             .intervalFunction(intervalFunction)
             .retryOnException(e -> e instanceof IOException || e instanceof TimeoutException)
@@ -626,7 +617,7 @@ public class Oauth2TokenManager implements AutoCloseable {
           metrics.getNumberOfFailedCalls(),
           metrics.getNumberOfSlowCalls(),
           metrics.getNumberOfNotPermittedCalls());
-    } catch (Exception e) {
+    } catch (Exception _) {
       log.debug("Could not retrieve circuit breaker metrics for client {}", config.getClientId());
     }
   }
@@ -692,25 +683,5 @@ public class Oauth2TokenManager implements AutoCloseable {
     }
   }
 
-  /**
-   * Internal record for token info.
-   *
-   * This is used for RetryConfig type inference and can represent token data if needed.
-   */
-  private record TokenInfo(
-      String tokenValue,
-      OAuth2TokenType tokenType,
-      Instant issuedAt,
-      Instant expiresAt,
-      Set<String> scopes) {
-
-    TokenInfo {
-      scopes = (scopes == null) ? Set.of() : Set.copyOf(scopes);
-    }
-
-    boolean isValid(Duration threshold) {
-      return tokenValue != null && Instant.now().plus(threshold).isBefore(expiresAt);
-    }
-  }
 }
 

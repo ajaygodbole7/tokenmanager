@@ -15,15 +15,13 @@
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-    <java.version>17</java.version>
-    <maven.compiler.source>${java.version}</maven.compiler.source>
-    <maven.compiler.target>${java.version}</maven.compiler.target>
+    <java.version>25</java.version>
 
     <!-- Core dependencies -->
     <jackson.version>2.18.2</jackson.version>
     <log4j.version>2.24.2</log4j.version>
     <slf4j.version>2.0.16</slf4j.version>
-    <lombok.version>1.18.36</lombok.version>
+    <lombok.version>1.18.42</lombok.version>
     <resilience4j.version>2.2.0</resilience4j.version>
     <okhttp.version>5.0.0-alpha.14</okhttp.version>
 
@@ -34,7 +32,7 @@
   </properties>
 
   <dependencies>
-    <!-- Core Dependencies - provided scope for library users -->
+    <!-- Core Dependencies -->
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-databind</artifactId>
@@ -48,16 +46,6 @@
     <dependency>
       <groupId>io.github.resilience4j</groupId>
       <artifactId>resilience4j-all</artifactId>
-      <version>${resilience4j.version}</version>
-    </dependency>
-    <dependency>
-      <groupId>io.github.resilience4j</groupId>
-      <artifactId>resilience4j-circuitbreaker</artifactId>
-      <version>${resilience4j.version}</version>
-    </dependency>
-    <dependency>
-      <groupId>io.github.resilience4j</groupId>
-      <artifactId>resilience4j-retry</artifactId>
       <version>${resilience4j.version}</version>
     </dependency>
 
@@ -132,11 +120,11 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
-        <version>3.13.0</version>
+        <version>3.14.0</version>
         <configuration>
-          <source>${java.version}</source>
-          <target>${java.version}</target>
+          <release>${java.version}</release>
           <encoding>${project.build.sourceEncoding}</encoding>
+          <proc>full</proc>
           <annotationProcessorPaths>
             <path>
               <groupId>org.projectlombok</groupId>

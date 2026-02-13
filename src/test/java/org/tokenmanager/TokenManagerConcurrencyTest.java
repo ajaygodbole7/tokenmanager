@@ -41,7 +41,7 @@ class TokenManagerConcurrencyTest {
   private MockWebServer mockWebServer;
   private OkHttpClient httpClient;
   private TokenConfig tokenConfig;
-  private Oauth2TokenManager tokenManager;
+  private OAuth2TokenManager tokenManager;
 
   @BeforeEach
   void setUp() throws IOException {
@@ -68,7 +68,7 @@ class TokenManagerConcurrencyTest {
 
     httpClient = new OkHttpClient.Builder()
         .sslSocketFactory(clientCerts.sslSocketFactory(), clientCerts.trustManager())
-        .hostnameVerifier((hostname, session) -> true)
+        .hostnameVerifier((_, _) -> true)
         .connectTimeout(HTTP_TIMEOUT)
         .readTimeout(HTTP_TIMEOUT)
         .writeTimeout(HTTP_TIMEOUT)
@@ -83,7 +83,7 @@ class TokenManagerConcurrencyTest {
         .httpClient(httpClient)
         .build();
 
-    tokenManager = new Oauth2TokenManager(tokenConfig);
+    tokenManager = new OAuth2TokenManager(tokenConfig);
   }
 
   @AfterEach
@@ -383,7 +383,7 @@ class TokenManagerConcurrencyTest {
         .httpClient(httpClient)
         .build();
 
-    Oauth2TokenManager timeoutManager = new Oauth2TokenManager(shortExpirationConfig);
+    OAuth2TokenManager timeoutManager = new OAuth2TokenManager(shortExpirationConfig);
 
     // Set up first token that will expire quickly
     mockWebServer.enqueue(new MockResponse()
@@ -604,9 +604,9 @@ class TokenManagerConcurrencyTest {
             }
             """));
 
-    // When - Start a thread that will get caught in refresh
+    // When - Start a virtual thread that will get caught in refresh
     Exception[] caughtException = new Exception[1];
-    Thread thread = new Thread(() -> {
+    Thread thread = Thread.ofVirtual().name("shutdown-test").unstarted(() -> {
       try {
         tokenManager.getToken();
         fail("Should have thrown exception due to shutdown");
@@ -656,7 +656,7 @@ class TokenManagerConcurrencyTest {
         .httpClient(httpClient)
         .build();
 
-    Oauth2TokenManager timeoutManager = new Oauth2TokenManager(shortTimeoutConfig);
+    OAuth2TokenManager timeoutManager = new OAuth2TokenManager(shortTimeoutConfig);
 
     // Set up response that will timeout
     mockWebServer.enqueue(new MockResponse()
@@ -696,12 +696,14 @@ class TokenManagerConcurrencyTest {
         .as("All threads should complete")
         .isTrue();
 
-    // Verify all threads got timeout exceptions
+    // Verify all threads got timeout or cancellation exceptions
+    // When one thread times out and cancels the shared future, other threads get CancellationException
     assertThat(exceptions)
-        .as("All threads should get timeout exceptions")
+        .as("All threads should get timeout or cancellation exceptions")
         .hasSize(threadCount)
         .allMatch(e -> e instanceof ServiceUnavailableException
-            && e.getCause() instanceof TimeoutException);
+            && (e.getCause() instanceof TimeoutException
+                || e.getCause() instanceof CancellationException));
 
     // Cleanup
     executor.shutdown();
@@ -829,8 +831,8 @@ class TokenManagerConcurrencyTest {
     // Track the exception from the interrupted thread
     Exception[] caughtException = new Exception[1];
 
-    // Create and start a thread that will be interrupted
-    Thread thread = new Thread(() -> {
+    // Create and start a virtual thread that will be interrupted
+    Thread thread = Thread.ofVirtual().name("interrupt-test").unstarted(() -> {
       try {
         tokenManager.getToken();
         fail("Thread should have been interrupted");
@@ -874,7 +876,7 @@ class TokenManagerConcurrencyTest {
         .httpClient(httpClient)
         .build();
 
-    Oauth2TokenManager timeoutManager = new Oauth2TokenManager(shortTimeoutConfig);
+    OAuth2TokenManager timeoutManager = new OAuth2TokenManager(shortTimeoutConfig);
 
     // Get an expired token to force refresh
     mockWebServer.enqueue(new MockResponse()
@@ -906,8 +908,8 @@ class TokenManagerConcurrencyTest {
     // Track the exception from the thread
     Exception[] caughtException = new Exception[1];
 
-    // Create and start a thread that should timeout
-    Thread thread = new Thread(() -> {
+    // Create and start a virtual thread that should timeout
+    Thread thread = Thread.ofVirtual().name("timeout-test").unstarted(() -> {
       try {
         timeoutManager.getToken();
         fail("Thread should have timed out");

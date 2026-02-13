@@ -75,7 +75,7 @@ public record OAuth2Token(
    * @return formatted token for use in Authorization header
    */
   public String getAuthorizationHeaderValue() {
-    return String.format("%s %s", tokenType.toString(), tokenValue);
+    return tokenType + " " + tokenValue;
   }
 
   /**

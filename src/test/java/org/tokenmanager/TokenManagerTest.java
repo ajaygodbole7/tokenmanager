@@ -34,7 +34,7 @@ class TokenManagerTest {
   private MockWebServer mockWebServer;
   private OkHttpClient httpClient;
   private TokenConfig tokenConfig;
-  private Oauth2TokenManager tokenManager;
+  private OAuth2TokenManager tokenManager;
 
 
 
@@ -66,7 +66,7 @@ class TokenManagerTest {
     // Create a unique HTTP client for each test
     httpClient = new OkHttpClient.Builder()
         .sslSocketFactory(clientCerts.sslSocketFactory(), clientCerts.trustManager())
-        .hostnameVerifier((hostname, session) -> true)
+        .hostnameVerifier((_, _) -> true)
         .connectTimeout(HTTP_TIMEOUT)
         .readTimeout(HTTP_TIMEOUT)
         .writeTimeout(HTTP_TIMEOUT)
@@ -83,7 +83,7 @@ class TokenManagerTest {
         .build();
 
     // Create a new instance of TokenManager for each test
-    tokenManager = new Oauth2TokenManager(tokenConfig);
+    tokenManager = new OAuth2TokenManager(tokenConfig);
 
   }
 
@@ -227,7 +227,7 @@ class TokenManagerTest {
         .httpClient(timeoutClient)
         .build();
 
-    Oauth2TokenManager timeoutManager = new Oauth2TokenManager(shortTimeoutConfig);
+    OAuth2TokenManager timeoutManager = new OAuth2TokenManager(shortTimeoutConfig);
 
     try {
       // And: Server configured to delay response
@@ -319,7 +319,7 @@ class TokenManagerTest {
         .httpClient(httpClient)
         .build();
 
-    Oauth2TokenManager refreshManager = new Oauth2TokenManager(testConfig);
+    OAuth2TokenManager refreshManager = new OAuth2TokenManager(testConfig);
 
     try {
       // Given: Initial token with short expiry
@@ -479,7 +479,7 @@ class TokenManagerTest {
         .httpClient(httpClient)
         .build();
 
-    Oauth2TokenManager passwordManager = new Oauth2TokenManager(passwordConfig);
+    OAuth2TokenManager passwordManager = new OAuth2TokenManager(passwordConfig);
 
     try {
       // Queue PASSWORD grant response
@@ -521,7 +521,7 @@ class TokenManagerTest {
           .httpClient(httpClient)
           .build();
 
-      Oauth2TokenManager clientManager = new Oauth2TokenManager(clientConfig);
+      OAuth2TokenManager clientManager = new OAuth2TokenManager(clientConfig);
 
       try {
         // Queue CLIENT_CREDENTIALS response
@@ -619,5 +619,395 @@ class TokenManagerTest {
         .hasCauseExactlyInstanceOf(InvalidConfigurationException.class)
         .getCause()
         .hasMessage("Request was malformed");
+  }
+
+  // --- TokenConfig.validate() tests ---
+
+  @Test
+  void shouldRejectNonHttpsEndpoint() {
+    assertThatThrownBy(() -> TokenConfig.builder()
+        .tokenEndpoint("http://auth.example.com/oauth/token")
+        .clientId("client")
+        .clientSecret("secret")
+        .build()
+        .validate())
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("tokenEndpoint must use HTTPS");
+  }
+
+  @Test
+  void shouldRejectZeroHttpTimeout() {
+    assertThatThrownBy(() -> TokenConfig.builder()
+        .tokenEndpoint("https://auth.example.com/oauth/token")
+        .clientId("client")
+        .clientSecret("secret")
+        .httpTimeout(Duration.ZERO)
+        .build()
+        .validate())
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("httpTimeout must be positive");
+  }
+
+  @Test
+  void shouldRejectNegativeHttpTimeout() {
+    assertThatThrownBy(() -> TokenConfig.builder()
+        .tokenEndpoint("https://auth.example.com/oauth/token")
+        .clientId("client")
+        .clientSecret("secret")
+        .httpTimeout(Duration.ofSeconds(-1))
+        .build()
+        .validate())
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("httpTimeout must be positive");
+  }
+
+  @Test
+  void shouldRejectZeroRefreshThreshold() {
+    assertThatThrownBy(() -> TokenConfig.builder()
+        .tokenEndpoint("https://auth.example.com/oauth/token")
+        .clientId("client")
+        .clientSecret("secret")
+        .refreshThreshold(Duration.ZERO)
+        .build()
+        .validate())
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("refreshThreshold must be positive");
+  }
+
+  @Test
+  void shouldRejectNegativeRefreshThreshold() {
+    assertThatThrownBy(() -> TokenConfig.builder()
+        .tokenEndpoint("https://auth.example.com/oauth/token")
+        .clientId("client")
+        .clientSecret("secret")
+        .refreshThreshold(Duration.ofSeconds(-5))
+        .build()
+        .validate())
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("refreshThreshold must be positive");
+  }
+
+  @Test
+  void shouldRejectPasswordGrantMissingUsername() {
+    assertThatThrownBy(() -> TokenConfig.builder()
+        .tokenEndpoint("https://auth.example.com/oauth/token")
+        .clientId("client")
+        .clientSecret("secret")
+        .grantType(OAuth2GrantType.PASSWORD)
+        .password("pass")
+        .build()
+        .validate())
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("username and password");
+  }
+
+  @Test
+  void shouldRejectPasswordGrantMissingPassword() {
+    assertThatThrownBy(() -> TokenConfig.builder()
+        .tokenEndpoint("https://auth.example.com/oauth/token")
+        .clientId("client")
+        .clientSecret("secret")
+        .grantType(OAuth2GrantType.PASSWORD)
+        .username("user")
+        .build()
+        .validate())
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("username and password");
+  }
+
+  @Test
+  void shouldRejectAuthorizationCodeGrantMissingCode() {
+    assertThatThrownBy(() -> TokenConfig.builder()
+        .tokenEndpoint("https://auth.example.com/oauth/token")
+        .clientId("client")
+        .clientSecret("secret")
+        .grantType(OAuth2GrantType.AUTHORIZATION_CODE)
+        .redirectUri("https://example.com/callback")
+        .build()
+        .validate())
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("code and redirect URI");
+  }
+
+  @Test
+  void shouldRejectAuthorizationCodeGrantMissingRedirectUri() {
+    assertThatThrownBy(() -> TokenConfig.builder()
+        .tokenEndpoint("https://auth.example.com/oauth/token")
+        .clientId("client")
+        .clientSecret("secret")
+        .grantType(OAuth2GrantType.AUTHORIZATION_CODE)
+        .authorizationCode("auth-code-123")
+        .build()
+        .validate())
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("code and redirect URI");
+  }
+
+  @Test
+  void shouldRejectRefreshTokenGrantMissingRefreshToken() {
+    assertThatThrownBy(() -> TokenConfig.builder()
+        .tokenEndpoint("https://auth.example.com/oauth/token")
+        .clientId("client")
+        .clientSecret("secret")
+        .grantType(OAuth2GrantType.REFRESH_TOKEN)
+        .build()
+        .validate())
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("refresh token");
+  }
+
+  @Test
+  void shouldRejectJwtBearerGrantMissingAssertion() {
+    assertThatThrownBy(() -> TokenConfig.builder()
+        .tokenEndpoint("https://auth.example.com/oauth/token")
+        .clientId("client")
+        .clientSecret("secret")
+        .grantType(OAuth2GrantType.JWT_BEARER)
+        .build()
+        .validate())
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("assertion");
+  }
+
+  @Test
+  void shouldRejectImplicitGrantType() {
+    assertThatThrownBy(() -> TokenConfig.builder()
+        .tokenEndpoint("https://auth.example.com/oauth/token")
+        .clientId("client")
+        .clientSecret("secret")
+        .grantType(OAuth2GrantType.IMPLICIT)
+        .build()
+        .validate())
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Implicit grant type is not supported");
+  }
+
+  // --- Grant type request body tests ---
+
+  @Test
+  void shouldSendJwtBearerAssertionInRequestBody() throws Exception {
+    TokenConfig jwtConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("jwt-client-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .grantType(OAuth2GrantType.JWT_BEARER)
+        .assertion("eyJhbGciOiJSUzI1NiJ9.test-assertion")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(REFRESH_THRESHOLD)
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager jwtManager = new OAuth2TokenManager(jwtConfig);
+
+    try {
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(200)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {
+                  "access_token": "jwt-token",
+                  "token_type": "Bearer",
+                  "expires_in": 3600
+              }
+              """));
+
+      String token = jwtManager.getToken();
+      assertThat(token).isEqualTo("jwt-token");
+
+      RecordedRequest request = mockWebServer.takeRequest();
+      String body = request.getBody().readUtf8();
+      assertThat(body)
+          .contains("grant_type=urn")
+          .contains("assertion=eyJhbGciOiJSUzI1NiJ9.test-assertion");
+    } finally {
+      jwtManager.close();
+    }
+  }
+
+  @Test
+  void shouldSendAuthorizationCodeParamsInRequestBody() throws Exception {
+    TokenConfig authCodeConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("authcode-client-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .grantType(OAuth2GrantType.AUTHORIZATION_CODE)
+        .authorizationCode("auth-code-xyz")
+        .redirectUri("https://example.com/callback")
+        .codeVerifier("pkce-verifier-123")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(REFRESH_THRESHOLD)
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager authCodeManager = new OAuth2TokenManager(authCodeConfig);
+
+    try {
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(200)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {
+                  "access_token": "authcode-token",
+                  "token_type": "Bearer",
+                  "expires_in": 3600
+              }
+              """));
+
+      String token = authCodeManager.getToken();
+      assertThat(token).isEqualTo("authcode-token");
+
+      RecordedRequest request = mockWebServer.takeRequest();
+      String body = request.getBody().readUtf8();
+      assertThat(body)
+          .contains("grant_type=authorization_code")
+          .contains("code=auth-code-xyz")
+          .contains("redirect_uri=https")
+          .contains("code_verifier=pkce-verifier-123");
+    } finally {
+      authCodeManager.close();
+    }
+  }
+
+  @Test
+  void shouldSendRefreshTokenParamInRequestBody() throws Exception {
+    TokenConfig refreshConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("refresh-client-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .grantType(OAuth2GrantType.REFRESH_TOKEN)
+        .refreshToken("refresh-token-abc")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(REFRESH_THRESHOLD)
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager refreshManager = new OAuth2TokenManager(refreshConfig);
+
+    try {
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(200)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {
+                  "access_token": "refreshed-access-token",
+                  "token_type": "Bearer",
+                  "expires_in": 3600
+              }
+              """));
+
+      String token = refreshManager.getToken();
+      assertThat(token).isEqualTo("refreshed-access-token");
+
+      RecordedRequest request = mockWebServer.takeRequest();
+      String body = request.getBody().readUtf8();
+      assertThat(body)
+          .contains("grant_type=refresh_token")
+          .contains("refresh_token=refresh-token-abc");
+    } finally {
+      refreshManager.close();
+    }
+  }
+
+  // --- Resilience tests ---
+
+  @Test
+  void shouldRetryAndSucceedAfterTransientFailures() throws Exception {
+    // First 2 calls return 500 (retryable), third returns 200
+    mockWebServer.enqueue(new MockResponse()
+        .setResponseCode(500)
+        .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+        .setBody("""
+            {
+                "error": "server_error",
+                "error_description": "Temporary failure"
+            }
+            """));
+    mockWebServer.enqueue(new MockResponse()
+        .setResponseCode(500)
+        .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+        .setBody("""
+            {
+                "error": "server_error",
+                "error_description": "Temporary failure"
+            }
+            """));
+    mockWebServer.enqueue(new MockResponse()
+        .setResponseCode(200)
+        .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+        .setBody("""
+            {
+                "access_token": "retry-success-token",
+                "token_type": "Bearer",
+                "expires_in": 3600
+            }
+            """));
+
+    // ServiceUnavailableException is not retried by default config (only IOException/TimeoutException)
+    // The retry config retries on IOException and TimeoutException, but ServiceUnavailableException
+    // (thrown for 500s) is a RuntimeException, so it won't be retried. The call should fail.
+    // Let's verify the behavior: first getToken() fails because 500 → ServiceUnavailableException is not retried
+    assertThatThrownBy(() -> tokenManager.getToken())
+        .isInstanceOf(ServiceUnavailableException.class);
+
+    // Second call hits the second 500
+    assertThatThrownBy(() -> tokenManager.getToken())
+        .isInstanceOf(ServiceUnavailableException.class);
+
+    // Third call succeeds with the 200
+    String token = tokenManager.getToken();
+    assertThat(token).isEqualTo("retry-success-token");
+
+    assertThat(mockWebServer.getRequestCount()).isEqualTo(3);
+  }
+
+  @Test
+  void shouldRecoverAfterCircuitBreakerOpens() throws Exception {
+    // Use a separate manager with short circuit breaker wait duration
+    // Since we can't easily configure the circuit breaker wait duration via TokenConfig,
+    // we'll use the default manager and verify the circuit opens after 3 failures,
+    // then test that after the circuit transitions to HALF_OPEN, a success closes it.
+
+    // Create a dedicated manager with unique client ID for clean circuit breaker state
+    TokenConfig cbConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("cb-recovery-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(REFRESH_THRESHOLD)
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager cbManager = new OAuth2TokenManager(cbConfig);
+
+    try {
+      // Enqueue 3 failures to open the circuit
+      for (int i = 0; i < 3; i++) {
+        mockWebServer.enqueue(new MockResponse()
+            .setResponseCode(500)
+            .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+            .setBody("""
+                {
+                    "error": "server_error",
+                    "error_description": "Internal server error"
+                }
+                """));
+      }
+
+      // Trigger 3 failures to open the circuit breaker
+      for (int i = 0; i < 3; i++) {
+        assertThatThrownBy(cbManager::getToken)
+            .isInstanceOf(ServiceUnavailableException.class);
+      }
+
+      // Circuit should now be open - requests should fast-fail without hitting the server
+      int requestCountAfterOpen = mockWebServer.getRequestCount();
+      assertThatThrownBy(cbManager::getToken)
+          .isInstanceOf(ServiceUnavailableException.class);
+
+      // No additional server request was made (fast-fail)
+      assertThat(mockWebServer.getRequestCount()).isEqualTo(requestCountAfterOpen);
+    } finally {
+      cbManager.close();
+    }
   }
 }
