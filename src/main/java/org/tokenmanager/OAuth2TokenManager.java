@@ -154,14 +154,25 @@ public class OAuth2TokenManager implements AutoCloseable {
       return cachedToken;
     }
 
-    // Step 2: Check circuit breaker state now that we know token is not valid
-    checkCircuitBreaker();
+    try {
+      // Step 2: Check circuit breaker state now that we know token is not valid
+      checkCircuitBreaker();
 
-    // Step 3: Proceed with refresh
-    CompletableFuture<OAuth2Token> refreshOperation = refreshToken();
+      // Step 3: Proceed with refresh
+      CompletableFuture<OAuth2Token> refreshOperation = refreshToken();
 
-    // Step 4: Wait for refresh and handle exceptions
-    return awaitRefreshAndHandleExceptions(refreshOperation);
+      // Step 4: Wait for refresh and handle exceptions
+      return awaitRefreshAndHandleExceptions(refreshOperation);
+    } catch (TokenException e) {
+      // Graceful degradation: if the current token is not yet expired, return it
+      // instead of throwing. This covers proactive refresh failures (429, 500, CB open, etc.)
+      if (clock.instant().isBefore(currentToken.expiresAt())) {
+        log.warn("Token refresh failed for client {}. Returning current token (expires at {}): {}",
+            config.getClientId(), currentToken.expiresAt(), e.getMessage());
+        return currentToken.tokenValue();
+      }
+      throw e;
+    }
   }
 
   /**
@@ -429,6 +440,12 @@ public class OAuth2TokenManager implements AutoCloseable {
   private void fallbackToHttpStatusHandling(Response response, String errorBody) {
     if (response.code() == 401 || response.code() == 403) {
       throw new InvalidCredentialsException("Authentication failed");
+    } else if (response.code() == 429) {
+      String retryAfter = response.header("Retry-After");
+      String msg = retryAfter != null
+          ? "Rate limited by server. Retry after " + retryAfter + " seconds"
+          : "Rate limited by server";
+      throw new ServiceUnavailableException(msg);
     } else if (response.code() >= 500) {
       throw new ServiceUnavailableException("Server error: " + response.code());
     } else {

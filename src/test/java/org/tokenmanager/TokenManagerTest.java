@@ -1048,6 +1048,230 @@ class TokenManagerTest {
     assertThat(invalid.isValid(Duration.ZERO, pastClock)).isFalse();
   }
 
+  // --- 429 handling and graceful degradation tests ---
+
+  @Test
+  void shouldReturnCurrentTokenWhenRefreshHits429() throws Exception {
+    MutableClock testClock = new MutableClock(Instant.now());
+
+    TokenConfig testConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("429-fallback-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(Duration.ofSeconds(10))
+        .clock(testClock)
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager manager = new OAuth2TokenManager(testConfig);
+
+    try {
+      // Get initial token with 60s expiry
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(200)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {
+                  "access_token": "good-token",
+                  "token_type": "Bearer",
+                  "expires_in": 60
+              }
+              """));
+
+      String initial = manager.getToken();
+      assertThat(initial).isEqualTo("good-token");
+      assertThat(mockWebServer.getRequestCount()).isEqualTo(1);
+
+      // Advance clock within refresh threshold but before expiry
+      // Token expires at t=60, threshold=10s, so at t=51 → 51+10=61>60 → triggers refresh
+      // But token itself is still valid (t=51 < t=60)
+      testClock.advance(Duration.ofSeconds(51));
+
+      // Server responds with 429
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(429)
+          .addHeader("Retry-After", "30"));
+
+      // Should fall back to current token instead of throwing
+      String fallback = manager.getToken();
+      assertThat(fallback).isEqualTo("good-token");
+
+      // Verify the server was actually hit (not just cached)
+      assertThat(mockWebServer.getRequestCount()).isEqualTo(2);
+    } finally {
+      manager.close();
+    }
+  }
+
+  @Test
+  void shouldThrowOn429WhenTokenExpired() throws Exception {
+    MutableClock testClock = new MutableClock(Instant.now());
+
+    TokenConfig testConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("429-expired-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(Duration.ofSeconds(10))
+        .clock(testClock)
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager manager = new OAuth2TokenManager(testConfig);
+
+    try {
+      // Get initial token with 60s expiry
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(200)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {
+                  "access_token": "expiring-token",
+                  "token_type": "Bearer",
+                  "expires_in": 60
+              }
+              """));
+
+      manager.getToken();
+
+      // Advance clock past expiry
+      testClock.advance(Duration.ofSeconds(61));
+
+      // Server responds with 429
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(429)
+          .addHeader("Retry-After", "60"));
+
+      // Should throw because token is expired — no fallback possible
+      // Outer exception is "Service is unavailable", inner cause has the 429 details
+      assertThatThrownBy(manager::getToken)
+          .isInstanceOf(ServiceUnavailableException.class)
+          .hasMessage("Service is unavailable")
+          .hasCauseExactlyInstanceOf(ServiceUnavailableException.class)
+          .getCause()
+          .hasMessageContaining("Rate limited");
+    } finally {
+      manager.close();
+    }
+  }
+
+  @Test
+  void shouldReturnCurrentTokenWhenRefreshHits500() throws Exception {
+    MutableClock testClock = new MutableClock(Instant.now());
+
+    TokenConfig testConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("500-fallback-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(Duration.ofSeconds(10))
+        .clock(testClock)
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager manager = new OAuth2TokenManager(testConfig);
+
+    try {
+      // Get initial token with 60s expiry
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(200)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {
+                  "access_token": "good-token-500",
+                  "token_type": "Bearer",
+                  "expires_in": 60
+              }
+              """));
+
+      String initial = manager.getToken();
+      assertThat(initial).isEqualTo("good-token-500");
+
+      // Advance clock within refresh threshold but before expiry
+      testClock.advance(Duration.ofSeconds(51));
+
+      // Server responds with 500
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(500)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {
+                  "error": "server_error",
+                  "error_description": "Internal server error"
+              }
+              """));
+
+      // Should fall back to current token
+      String fallback = manager.getToken();
+      assertThat(fallback).isEqualTo("good-token-500");
+    } finally {
+      manager.close();
+    }
+  }
+
+  @Test
+  void shouldFallbackWhenCircuitBreakerOpensWithValidToken() throws Exception {
+    MutableClock testClock = new MutableClock(Instant.now());
+
+    TokenConfig testConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("cb-fallback-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(Duration.ofSeconds(10))
+        .clock(testClock)
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager manager = new OAuth2TokenManager(testConfig);
+
+    try {
+      // Get initial token with 120s expiry (long-lived)
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(200)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {
+                  "access_token": "long-lived-token",
+                  "token_type": "Bearer",
+                  "expires_in": 120
+              }
+              """));
+
+      String initial = manager.getToken();
+      assertThat(initial).isEqualTo("long-lived-token");
+
+      // Advance clock within refresh threshold but well before expiry
+      // Token expires at t=120, threshold=10s, at t=111 → 111+10=121>120 → triggers refresh
+      // But token still valid (t=111 < t=120)
+      testClock.advance(Duration.ofSeconds(111));
+
+      // Trip the circuit breaker with 3 consecutive 500 failures
+      for (int i = 0; i < 3; i++) {
+        mockWebServer.enqueue(new MockResponse()
+            .setResponseCode(500)
+            .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+            .setBody("""
+                {
+                    "error": "server_error",
+                    "error_description": "Internal server error"
+                }
+                """));
+
+        // Each call should fall back to the current valid token
+        String fallback = manager.getToken();
+        assertThat(fallback).isEqualTo("long-lived-token");
+      }
+
+      // Circuit breaker is now open — next call should still fall back
+      String cbFallback = manager.getToken();
+      assertThat(cbFallback).isEqualTo("long-lived-token");
+    } finally {
+      manager.close();
+    }
+  }
+
   @Test
   void shouldRefreshAtExactThresholdBoundary() throws Exception {
     MutableClock testClock = new MutableClock(Instant.now());
