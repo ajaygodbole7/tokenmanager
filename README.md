@@ -1,102 +1,202 @@
 # OAuth2 Token Manager
 
-## Overview
-OAuth2 Token Manager is a Java library that handles the complete lifecycle of OAuth2 tokens in production environments. It provides a thread-safe, resilient solution for managing access tokens with built-in support for caching, automatic refresh, and fault tolerance.
+Handles OAuth2 token caching, refresh, retries, and concurrent access. One method call, always returns a valid OAuth2 token. Use where needed — builder clauses, inline lambdas.
 
-## Why is the Token Manager needed?
+Uses OkHttp internally for token endpoint requests and Resilience4j for circuit breaking and retry.
 
-OAuth2 token management in production applications presents several challenges:
-- Tokens expire and need periodic refresh
-- Multiple threads might attempt simultaneous refreshes
-- Network issues and service outages need graceful handling
-- Frequent token refreshes can impact performance
+## Usage
 
-The Token Manager solves these challenges with a production-ready solution that handles token lifecycle, concurrency, and error recovery automatically.
-
-## Key Features
-
-- **Token Caching**: Caches valid tokens in memory with configurable refresh thresholds
-- **Concurrency Management**: Thread-safe implementation preventing duplicate refresh attempts
-- **Resilience**: Circuit breaker pattern and exponential backoff retry mechanism
-- **Error Handling**: Comprehensive OAuth2 error classification and status code mapping
-- **Monitoring**: Detailed logging and metrics for service health
-
-## Sample Invocation
-
-### Basic Usage
+### Plain Java
 
 ```java
-// Create configuration
 TokenConfig config = TokenConfig.builder()
     .clientId("your-client-id")
     .clientSecret("your-client-secret")
     .tokenEndpoint("https://auth.example.com/token")
-    .grantType(OAuth2GrantType.CLIENT_CREDENTIALS)
     .build();
 
-// Initialize token manager
-try (Oauth2TokenManager tokenManager = new Oauth2TokenManager(config)) {
-    // Get a valid token
-    String token = tokenManager.getToken();
-    
-    // Use token for API calls
-    // Token manager will automatically refresh when needed
+OAuth2TokenManager tokenManager = new OAuth2TokenManager(config);
+
+// use where needed
+String token = tokenManager.getToken();
+```
+
+```java
+// java.net.http
+HttpRequest request = HttpRequest.newBuilder()
+    .uri(URI.create("https://api.example.com/resource"))
+    .header("Authorization", "Bearer " + tokenManager.getToken())
+    .build();
+
+// OkHttp
+Request request = new Request.Builder()
+    .url("https://api.example.com/resource")
+    .addHeader("Authorization", "Bearer " + tokenManager.getToken())
+    .build();
+```
+
+### Spring Boot
+
+Register the token manager as a bean. Spring handles shutdown via `destroyMethod`.
+
+```java
+@Configuration
+public class TokenManagerConfig {
+
+    @Bean(destroyMethod = "close")
+    public OAuth2TokenManager paymentAuthManager(
+            @Value("${payment.oauth.client-id}") String clientId,
+            @Value("${payment.oauth.client-secret}") String clientSecret,
+            @Value("${payment.oauth.token-endpoint}") String tokenEndpoint) {
+
+        TokenConfig config = TokenConfig.builder()
+            .clientId(clientId)
+            .clientSecret(clientSecret)
+            .tokenEndpoint(tokenEndpoint)
+            .build();
+
+        return new OAuth2TokenManager(config);
+    }
 }
 ```
 
-### Advanced Configuration
+Inject and use:
 
 ```java
-TokenConfig config = TokenConfig.builder()
-    .clientId("your-client-id")
-    .clientSecret("your-client-secret")
+@Service
+public class PaymentService {
+    private final OAuth2TokenManager tokenManager;
+
+    public PaymentService(OAuth2TokenManager tokenManager) {
+        this.tokenManager = tokenManager;
+    }
+
+    public Receipt charge(Order order) {
+        HttpRequest request = HttpRequest.newBuilder()
+            .uri(URI.create("https://payments.example.com/charge"))
+            .header("Authorization", "Bearer " + tokenManager.getToken())
+            .POST(BodyPublishers.ofString(toJson(order)))
+            .build();
+
+        HttpResponse<String> response = httpClient.send(request, BodyHandlers.ofString());
+        return parseReceipt(response.body());
+    }
+}
+```
+
+## Configuration
+
+### Defaults
+
+- Grant type: `CLIENT_CREDENTIALS`
+- HTTP timeout: 10s
+- Refresh threshold: 30s before expiry
+- HTTPS required (non-HTTPS endpoints rejected at construction time)
+
+Override any default via `TokenConfig.builder()`.
+
+### Supported grant types
+
+| Grant type | Enum | Required fields |
+|---|---|---|
+| Client Credentials | `CLIENT_CREDENTIALS` | (default — clientId + clientSecret) |
+| Password | `PASSWORD` | `username`, `password` |
+| Authorization Code | `AUTHORIZATION_CODE` | `authorizationCode`, `redirectUri` |
+| Refresh Token | `REFRESH_TOKEN` | `refreshToken` |
+| JWT Bearer | `JWT_BEARER` | `assertion` |
+
+Implicit grant is not supported (OAuth2 spec discourages it for server-side flows).
+
+```java
+// Password
+TokenConfig.builder()
+    .clientId("id").clientSecret("secret")
     .tokenEndpoint("https://auth.example.com/token")
     .grantType(OAuth2GrantType.PASSWORD)
     .username("user@example.com")
-    .password("user-password")
-    .httpTimeout(Duration.ofSeconds(15))
-    .refreshThreshold(Duration.ofMinutes(5))
-    .scope("read write")
+    .password("password")
     .build();
 
-// Custom HTTP client configuration
-OkHttpClient customClient = new OkHttpClient.Builder()
-    .connectTimeout(Duration.ofSeconds(10))
-    .readTimeout(Duration.ofSeconds(10))
-    .addInterceptor(new LoggingInterceptor())
+// Authorization Code
+TokenConfig.builder()
+    .clientId("id").clientSecret("secret")
+    .tokenEndpoint("https://auth.example.com/token")
+    .grantType(OAuth2GrantType.AUTHORIZATION_CODE)
+    .authorizationCode("SplxlOBeZQQYbYS6WxSbIA")
+    .redirectUri("https://app.example.com/callback")
     .build();
 
-TokenConfig configWithCustomClient = config.toBuilder()
-    .httpClient(customClient)
+// Refresh Token
+TokenConfig.builder()
+    .clientId("id").clientSecret("secret")
+    .tokenEndpoint("https://auth.example.com/token")
+    .grantType(OAuth2GrantType.REFRESH_TOKEN)
+    .refreshToken("tGzv3JOkF0XG5Qx2TlKWIA")
     .build();
 
-try (Oauth2TokenManager tokenManager = new Oauth2TokenManager(configWithCustomClient)) {
-    String token = tokenManager.getToken();
-    // Use token...
-}
+// JWT Bearer
+TokenConfig.builder()
+    .clientId("id").clientSecret("secret")
+    .tokenEndpoint("https://auth.example.com/token")
+    .grantType(OAuth2GrantType.JWT_BEARER)
+    .assertion("eyJhbGciOi...")
+    .build();
 ```
 
-### Error Handling
+### Custom HTTP client
+
+The library creates its own OkHttp client by default. To supply a custom HTTP client (e.g., for custom TLS or interceptors):
+
+```java
+TokenConfig config = TokenConfig.builder()
+    .clientId("id").clientSecret("secret")
+    .tokenEndpoint("https://auth.example.com/token")
+    .httpClient(yourOkHttpClient)
+    .build();
+```
+
+> **Note:** If you pass your own client, the TokenManager uses it but does not close it.
+
+## Error handling
+
+`getToken()` throws `TokenException`. Four sealed subclasses cover every failure mode:
+
+| Exception | Meaning | Trigger |
+|---|---|---|
+| `InvalidCredentialsException` | Bad credentials | 401, 403, `invalid_client`, `invalid_grant` |
+| `InvalidConfigurationException` | Bad config | `invalid_request`, `invalid_scope`, `unsupported_grant_type` |
+| `InvalidEndpointException` | Unreachable endpoint | DNS failure, non-auth 4xx |
+| `ServiceUnavailableException` | Transient failure | 5xx, timeout, circuit breaker open, 429 |
 
 ```java
 try {
     String token = tokenManager.getToken();
-} catch (InvalidCredentialsException e) {
-    // Handle invalid credentials
-    log.error("Authentication failed: {}", e.getMessage());
-} catch (InvalidEndpointException e) {
-    // Handle invalid endpoint configuration
-    log.error("Invalid endpoint configuration: {}", e.getMessage());
-} catch (ServiceUnavailableException e) {
-    // Handle service unavailability
-    log.error("OAuth2 service unavailable: {}", e.getMessage());
+} catch (TokenException e) {
+    // Exhaustive pattern matching (Java 21+)
+    switch (e) {
+        case InvalidCredentialsException ex -> alertOps(ex);
+        case InvalidConfigurationException ex -> failFast(ex);
+        case InvalidEndpointException ex -> checkDns(ex);
+        case ServiceUnavailableException ex -> retryLater(ex);
+    }
 }
 ```
 
-Remember to properly close the token manager when it's no longer needed:
+## Concurrency and resilience
 
-```java
-tokenManager.close();
-```
+- **Single refresh per token** — multiple concurrent threads that request the same OAuth2 token share a single HTTP request. No thread storms, no duplicate fetches
+- **Circuit breaker** — opens after consecutive failures, 60s cooldown
+- **Retry with jitter** — exponential backoff with ±50% randomization, 3 attempts
+- **Graceful degradation** — failed refresh returns the cached token if still valid
+- **429 handling** — rate-limited responses do not trip the circuit breaker
 
-The Token Manager implements `AutoCloseable`, so it can be used in a try-with-resources block for automatic resource cleanup.
+## Resource management
+
+- `OAuth2TokenManager` implements `AutoCloseable`
+- `close()` is idempotent
+- `getToken()` after `close()` throws `IllegalStateException`
+
+## Requirements
+
+- Java 25+
+- Maven
