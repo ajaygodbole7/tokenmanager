@@ -1,6 +1,6 @@
 # OAuth2 Token Manager
 
-Handles OAuth2 token caching, refresh, retries, and concurrent access. One method call, always returns a valid OAuth2 token. Use where needed — builder clauses, inline lambdas.
+Handles OAuth2 token caching, refresh, retries, and concurrent access. One method call returns a valid OAuth2 token or throws a classified `TokenException`.
 
 Uses OkHttp internally for token endpoint requests and Resilience4j for circuit breaking and retry.
 
@@ -10,7 +10,7 @@ Uses OkHttp internally for token endpoint requests and Resilience4j for circuit 
 <dependency>
     <groupId>org.tokenmanager</groupId>
     <artifactId>tokenmanager</artifactId>
-    <version>1.0.0-SNAPSHOT</version>
+    <version>0.1.0-SNAPSHOT</version>
 </dependency>
 ```
 
@@ -102,7 +102,7 @@ public class PaymentService {
 - HTTP timeout: 10s
 - Refresh threshold: 30s before expiry
 - Scope: none (set via `.scope(Set.of("read", "write"))`)
-- Client authentication: form POST (`client_secret_post` per RFC 6749)
+- Client authentication: form POST (`client_secret_post`). Some providers require HTTP Basic (`client_secret_basic`) — not yet supported
 - HTTPS required (non-HTTPS endpoints rejected at construction time)
 
 Override any default via `TokenConfig.builder()`.
@@ -223,9 +223,9 @@ try {
 
 | Dependency | Version |
 |---|---|
-| JDK | 21, 25 |
-| OkHttp | 5.0.0-alpha.14 |
-| Resilience4j | 2.2.0 |
+| JDK | 21+ |
+| OkHttp | 5.3.2 |
+| Resilience4j | 2.3.0 |
 | Jackson | 2.18.2 |
 
 No compatibility guarantees until 1.0.0.
