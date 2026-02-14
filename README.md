@@ -4,6 +4,16 @@ Handles OAuth2 token caching, refresh, retries, and concurrent access. One metho
 
 Uses OkHttp internally for token endpoint requests and Resilience4j for circuit breaking and retry.
 
+## Installation
+
+```xml
+<dependency>
+    <groupId>org.tokenmanager</groupId>
+    <artifactId>tokenmanager</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+</dependency>
+```
+
 ## Usage
 
 ### Plain Java
@@ -91,6 +101,8 @@ public class PaymentService {
 - Grant type: `CLIENT_CREDENTIALS`
 - HTTP timeout: 10s
 - Refresh threshold: 30s before expiry
+- Scope: none (set via `.scope(Set.of("read", "write"))`)
+- Client authentication: form POST (`client_secret_post` per RFC 6749)
 - HTTPS required (non-HTTPS endpoints rejected at construction time)
 
 Override any default via `TokenConfig.builder()`.
@@ -106,6 +118,8 @@ Override any default via `TokenConfig.builder()`.
 | JWT Bearer | `JWT_BEARER` | `assertion` |
 
 Implicit grant is not supported (OAuth2 spec discourages it for server-side flows).
+
+TokenManager handles token endpoint exchanges only. Authorization redirects, PKCE flows, and token storage are your responsibility.
 
 ```java
 // Password
@@ -184,6 +198,8 @@ try {
 
 ## Concurrency and resilience
 
+`getToken()` is a blocking call. Tokens are cached in-memory per `OAuth2TokenManager` instance (not shared across JVMs).
+
 - **Single refresh per token** — multiple concurrent threads that request the same OAuth2 token share a single HTTP request. No thread storms, no duplicate fetches
 - **Circuit breaker** — opens after consecutive failures, 60s cooldown
 - **Retry with jitter** — exponential backoff with ±50% randomization, 3 attempts
@@ -198,5 +214,5 @@ try {
 
 ## Requirements
 
-- Java 25+
+- Java 25+ (sealed classes, pattern matching, records, virtual threads, unnamed variables)
 - Maven
