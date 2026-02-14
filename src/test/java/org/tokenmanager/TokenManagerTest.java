@@ -1380,4 +1380,24 @@ class TokenManagerTest {
       assertThat(interval).isBetween(2000L, 6000L);
     }
   }
+
+  // --- Idempotent close tests ---
+
+  @Test
+  void shouldThrowIllegalStateExceptionAfterClose() {
+    tokenManager.close();
+
+    assertThatThrownBy(() -> tokenManager.getToken())
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("TokenManager is closed");
+  }
+
+  @Test
+  void shouldAllowMultipleCloseCallsWithoutThrowing() {
+    tokenManager.close();
+    tokenManager.close();
+    tokenManager.close();
+    // No exception — idempotent
+  }
+
 }

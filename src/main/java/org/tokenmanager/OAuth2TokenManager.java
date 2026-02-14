@@ -83,6 +83,7 @@ public class OAuth2TokenManager implements AutoCloseable {
   private final ReentrantLock refreshLock = new ReentrantLock();
   // Current valid or soon-to-be-refreshed token
   private volatile OAuth2Token currentToken;
+  private volatile boolean closed;
   /**
    * Represents the ongoing token refresh operation.
    * If null, no refresh is in progress. If non-null, all callers should wait on this future.
@@ -148,6 +149,10 @@ public class OAuth2TokenManager implements AutoCloseable {
    */
 
   public String getToken() {
+    if (closed) {
+      throw new IllegalStateException("TokenManager is closed");
+    }
+
     // Step 1: Possibly return cached token
     String cachedToken = returnCachedTokenIfValid();
     if (cachedToken != null) {
@@ -672,6 +677,11 @@ public class OAuth2TokenManager implements AutoCloseable {
    */
   @Override
   public void close() {
+    if (closed) {
+      return;
+    }
+    closed = true;
+
     // Cancel any ongoing refresh operation safely under the lock
     refreshLock.lock();
     try {
