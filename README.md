@@ -112,12 +112,14 @@ Override any default via `TokenConfig.builder()`.
 | Grant type | Enum | Required fields |
 |---|---|---|
 | Client Credentials | `CLIENT_CREDENTIALS` | (default — clientId + clientSecret) |
-| Password | `PASSWORD` | `username`, `password` |
+| Password (ROPC) | `PASSWORD` | `username`, `password` |
 | Authorization Code | `AUTHORIZATION_CODE` | `authorizationCode`, `redirectUri` |
 | Refresh Token | `REFRESH_TOKEN` | `refreshToken` |
 | JWT Bearer | `JWT_BEARER` | `assertion` |
 
 Implicit grant is not supported (OAuth2 spec discourages it for server-side flows).
+
+Password grant (ROPC) is supported for legacy and migration scenarios where the client is fully trusted. OAuth 2.1 omits ROPC and modern security guidance discourages its use. This library does not restrict your choice of grant type; you own the risk decision.
 
 TokenManager handles token endpoint exchanges only. Authorization redirects, PKCE flows, and token storage are your responsibility.
 
@@ -198,13 +200,13 @@ try {
 
 ## Concurrency and resilience
 
-`getToken()` is a blocking call. Tokens are cached in-memory per `OAuth2TokenManager` instance (not shared across JVMs).
-
-- **Single refresh per token** — multiple concurrent threads that request the same OAuth2 token share a single HTTP request. No thread storms, no duplicate fetches
-- **Circuit breaker** — opens after consecutive failures, 60s cooldown
-- **Retry with jitter** — exponential backoff with ±50% randomization, 3 attempts
-- **Graceful degradation** — failed refresh returns the cached token if still valid
-- **429 handling** — rate-limited responses do not trip the circuit breaker
+- `getToken()` is thread-safe and may be called concurrently from any number of threads
+- `getToken()` is a blocking call. Tokens are cached in-memory per `OAuth2TokenManager` instance (not shared across JVMs)
+- At most one in-flight refresh per manager instance at a time; concurrent callers share it. No thread storms, no duplicate fetches
+- If refresh fails but the cached token is still valid, `getToken()` returns the cached token; otherwise throws `TokenException`
+- Circuit breaker opens after consecutive failures, 60s cooldown
+- Retry with exponential backoff and ±50% jitter, 3 attempts
+- Rate-limited (429) responses do not trip the circuit breaker
 
 ## Resource management
 
@@ -216,3 +218,14 @@ try {
 
 - Java 25+ (sealed classes, pattern matching, records, virtual threads, unnamed variables)
 - Maven
+
+### Tested with (pre-release)
+
+| Dependency | Version |
+|---|---|
+| JDK | 25 |
+| OkHttp | 5.0.0-alpha.14 |
+| Resilience4j | 2.2.0 |
+| Jackson | 2.18.2 |
+
+No compatibility guarantees until 1.0.0.
