@@ -14,6 +14,10 @@ Uses OkHttp internally for token endpoint requests and Resilience4j for circuit 
 </dependency>
 ```
 
+```groovy
+implementation 'org.tokenmanager:tokenmanager:0.1.0-SNAPSHOT'
+```
+
 ## Usage
 
 ### Plain Java
@@ -105,7 +109,7 @@ public class PaymentService {
 - Client authentication: form POST (`client_secret_post`). Some providers require HTTP Basic (`client_secret_basic`) — not yet supported
 - HTTPS required (non-HTTPS endpoints rejected at construction time)
 
-Override any default via `TokenConfig.builder()`.
+Override any default via `TokenConfig.builder()` unless noted.
 
 ### Supported grant types
 
@@ -113,7 +117,7 @@ Override any default via `TokenConfig.builder()`.
 |---|---|---|
 | Client Credentials | `CLIENT_CREDENTIALS` | (default — clientId + clientSecret) |
 | Password (Resource Owner Password Credentials) | `PASSWORD` | `username`, `password` |
-| Authorization Code | `AUTHORIZATION_CODE` | `authorizationCode`, `redirectUri` |
+| Authorization Code | `AUTHORIZATION_CODE` | `authorizationCode`, `redirectUri`, `codeVerifier` (PKCE) |
 | Refresh Token | `REFRESH_TOKEN` | `refreshToken` |
 | JWT Bearer | `JWT_BEARER` | `assertion` |
 
@@ -133,13 +137,14 @@ TokenConfig.builder()
     .password("password")
     .build();
 
-// Authorization Code
+// Authorization Code with PKCE
 TokenConfig.builder()
     .clientId("id").clientSecret("secret")
     .tokenEndpoint("https://auth.example.com/token")
     .grantType(OAuth2GrantType.AUTHORIZATION_CODE)
     .authorizationCode("SplxlOBeZQQYbYS6WxSbIA")
     .redirectUri("https://app.example.com/callback")
+    .codeVerifier("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk")
     .build();
 
 // Refresh Token
@@ -206,7 +211,11 @@ try {
 - If refresh fails but the cached token is still valid, `getToken()` returns the cached token; otherwise throws `TokenException`
 - Circuit breaker opens after consecutive failures, 60s cooldown
 - Retry with exponential backoff and ±50% jitter, 3 attempts
-- Rate-limited (429) responses do not trip the circuit breaker
+- Rate-limited (429) responses do not trip the circuit breaker and are not retried. If the cached token is still valid, `getToken()` returns it
+
+## Security
+
+Tokens are stored in-memory only and never persisted to disk.
 
 ## Resource management
 
