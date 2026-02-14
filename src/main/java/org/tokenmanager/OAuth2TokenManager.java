@@ -14,6 +14,7 @@ import io.github.resilience4j.retry.Retry;
 import io.github.resilience4j.retry.RetryConfig;
 import io.github.resilience4j.retry.RetryRegistry;
 import java.io.IOException;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
@@ -67,6 +68,7 @@ public class OAuth2TokenManager implements AutoCloseable {
   private static final int HALF_OPEN_CALLS = 1;
 
   private final TokenConfig config;
+  private final Clock clock;
   private final OkHttpClient httpClient;
   private final ObjectMapper objectMapper;
   private final CircuitBreaker circuitBreaker;
@@ -95,6 +97,7 @@ public class OAuth2TokenManager implements AutoCloseable {
   public OAuth2TokenManager(@NonNull TokenConfig config) {
     config.validate();
     this.config = config;
+    this.clock = config.getClock();
 
     this.instanceId = generateInstanceId(config.getClientId());
     this.httpClient = Optional.ofNullable(config.getHttpClient())
@@ -165,7 +168,7 @@ public class OAuth2TokenManager implements AutoCloseable {
    * Checks if current token is still valid. If yes, returns it. Otherwise, returns null.
    */
   private String returnCachedTokenIfValid() {
-    if (currentToken.isValid(config.getRefreshThreshold())) {
+    if (currentToken.isValid(config.getRefreshThreshold(), clock)) {
       return currentToken.tokenValue();
     }
     return null;
@@ -500,7 +503,7 @@ public class OAuth2TokenManager implements AutoCloseable {
       scopes = Set.of(scopeNode.asText().split("\\s+"));
     }
 
-    Instant now = Instant.now();
+    Instant now = clock.instant();
     return new OAuth2Token(
         accessToken,
         tokenType,

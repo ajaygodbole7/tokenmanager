@@ -1,6 +1,7 @@
 package org.tokenmanager;
 
 import lombok.NonNull;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Set;
@@ -49,15 +50,26 @@ public record OAuth2Token(
 
 
   /**
-   * Checks if the token is valid considering the given threshold
+   * Checks if the token is valid considering the given threshold and clock
+   *
+   * @param threshold how long before actual expiry should token be considered invalid
+   * @param clock the clock to use for current time
+   * @return true if token is valid and not within threshold of expiry
+   */
+  public boolean isValid(Duration threshold, Clock clock) {
+    return tokenValue != null
+        && !tokenValue.equals("INVALID")
+        && clock.instant().plus(threshold).isBefore(expiresAt);
+  }
+
+  /**
+   * Checks if the token is valid considering the given threshold using the system clock
    *
    * @param threshold how long before actual expiry should token be considered invalid
    * @return true if token is valid and not within threshold of expiry
    */
   public boolean isValid(Duration threshold) {
-    return tokenValue != null
-        && !tokenValue.equals("INVALID")
-        && Instant.now().plus(threshold).isBefore(expiresAt);
+    return isValid(threshold, Clock.systemUTC());
   }
 
   /**

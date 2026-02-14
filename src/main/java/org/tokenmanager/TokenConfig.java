@@ -1,5 +1,6 @@
 package org.tokenmanager;
 
+import java.time.Clock;
 import java.time.Duration;
 import java.util.Collections;
 import java.util.Set;
@@ -29,6 +30,8 @@ public class TokenConfig {
   @Default Duration refreshThreshold = DEFAULT_REFRESH_THRESHOLD;
 
   @Default Duration httpTimeout = DEFAULT_HTTP_TIMEOUT;
+
+  @Default Clock clock = Clock.systemUTC();
 
   // Fields for other grant types
   String username; // For password grant

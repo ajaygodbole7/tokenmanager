@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -309,20 +310,23 @@ class TokenManagerTest {
    */
   @Test
   void whenTokenNearExpiry_thenProactivelyRefreshes() throws Exception {
-    // Create a fresh TokenManager for this test to avoid circuit breaker state
+    // Create a mutable clock so we can advance time without sleeping
+    MutableClock testClock = new MutableClock(Instant.now());
+
     TokenConfig testConfig = TokenConfig.builder()
         .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
-        .clientId("refresh-test-client")  // Different client ID to avoid shared state
+        .clientId("refresh-test-client")
         .clientSecret("test-secret")
         .httpTimeout(HTTP_TIMEOUT)
-        .refreshThreshold(Duration.ofMillis(500))  // Short refresh threshold for testing
+        .refreshThreshold(Duration.ofSeconds(1))
+        .clock(testClock)
         .httpClient(httpClient)
         .build();
 
     OAuth2TokenManager refreshManager = new OAuth2TokenManager(testConfig);
 
     try {
-      // Given: Initial token with short expiry
+      // Given: Initial token with 5 second expiry
       mockWebServer.enqueue(new MockResponse()
                                 .setResponseCode(200)
                                 .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
@@ -330,7 +334,7 @@ class TokenManagerTest {
                 {
                     "access_token": "initial-token",
                     "token_type": "Bearer",
-                    "expires_in": 2
+                    "expires_in": 5
                 }
                 """));
 
@@ -350,10 +354,10 @@ class TokenManagerTest {
       String initialToken = refreshManager.getToken();
       assertThat(initialToken).isEqualTo("initial-token");
 
-      // Wait for token to approach expiry
-      Thread.sleep(1500);  // Wait long enough for initial token to be near expiry
+      // Advance clock past the refresh threshold (5s expiry - 1s threshold = valid for 4s)
+      testClock.advance(Duration.ofSeconds(5));
 
-      // When: Request token again
+      // When: Request token again — should trigger refresh
       String refreshedToken = refreshManager.getToken();
 
       // Then: Should get new token
@@ -1008,6 +1012,100 @@ class TokenManagerTest {
       assertThat(mockWebServer.getRequestCount()).isEqualTo(requestCountAfterOpen);
     } finally {
       cbManager.close();
+    }
+  }
+
+  // --- Clock-specific tests ---
+
+  @Test
+  void isValid_shouldUseClockForTimeComparison() {
+    Instant baseTime = Instant.parse("2025-01-01T00:00:00Z");
+    MutableClock clock = new MutableClock(baseTime);
+
+    // Token expires 60s from baseTime
+    OAuth2Token token = new OAuth2Token(
+        "test-token", OAuth2TokenType.BEARER,
+        baseTime, baseTime.plusSeconds(60), Set.of());
+
+    // At t=0 with 10s threshold: 0+10=10 < 60 → valid
+    assertThat(token.isValid(Duration.ofSeconds(10), clock)).isTrue();
+
+    // Advance to t=49: 49+10=59 < 60 → still valid
+    clock.advance(Duration.ofSeconds(49));
+    assertThat(token.isValid(Duration.ofSeconds(10), clock)).isTrue();
+
+    // Advance to t=51: 51+10=61 > 60 → invalid (within threshold)
+    clock.advance(Duration.ofSeconds(2));
+    assertThat(token.isValid(Duration.ofSeconds(10), clock)).isFalse();
+
+    // Advance to t=70: 70+10=80 > 60 → invalid (past expiry)
+    clock.advance(Duration.ofSeconds(19));
+    assertThat(token.isValid(Duration.ofSeconds(10), clock)).isFalse();
+
+    // Invalid token is always invalid regardless of clock
+    OAuth2Token invalid = OAuth2Token.invalidToken();
+    MutableClock pastClock = new MutableClock(Instant.EPOCH.minusSeconds(1000));
+    assertThat(invalid.isValid(Duration.ZERO, pastClock)).isFalse();
+  }
+
+  @Test
+  void shouldRefreshAtExactThresholdBoundary() throws Exception {
+    MutableClock testClock = new MutableClock(Instant.now());
+
+    TokenConfig clockConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("boundary-test-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(Duration.ofSeconds(10))
+        .clock(testClock)
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager clockManager = new OAuth2TokenManager(clockConfig);
+
+    try {
+      // Token with 30s expiry
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(200)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {
+                  "access_token": "boundary-token",
+                  "token_type": "Bearer",
+                  "expires_in": 30
+              }
+              """));
+
+      clockManager.getToken();
+
+      // Advance to just before threshold (30s - 10s = 20s validity window)
+      // At 19s, now + 10s threshold = 29s < 30s expiry → still valid
+      testClock.advance(Duration.ofSeconds(19));
+      String stillValid = clockManager.getToken();
+      assertThat(stillValid).isEqualTo("boundary-token");
+      assertThat(mockWebServer.getRequestCount()).isEqualTo(1);
+
+      // Advance 2 more seconds to cross the threshold
+      // At 21s, now + 10s threshold = 31s > 30s expiry → needs refresh
+      testClock.advance(Duration.ofSeconds(2));
+
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(200)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {
+                  "access_token": "refreshed-boundary-token",
+                  "token_type": "Bearer",
+                  "expires_in": 3600
+              }
+              """));
+
+      String refreshed = clockManager.getToken();
+      assertThat(refreshed).isEqualTo("refreshed-boundary-token");
+      assertThat(mockWebServer.getRequestCount()).isEqualTo(2);
+    } finally {
+      clockManager.close();
     }
   }
 }

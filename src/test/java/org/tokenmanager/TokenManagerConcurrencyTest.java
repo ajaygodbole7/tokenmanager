@@ -1,6 +1,7 @@
 package org.tokenmanager;
 
 import java.util.Collections;
+import java.util.UUID;
 
 import okhttp3.OkHttpClient;
 import okhttp3.mockwebserver.MockResponse;
@@ -13,6 +14,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.concurrent.*;
 import java.util.Set;
 import java.util.List;
@@ -76,7 +78,7 @@ class TokenManagerConcurrencyTest {
 
     tokenConfig = TokenConfig.builder()
         .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
-        .clientId("test-client")
+        .clientId("test-client-" + UUID.randomUUID())
         .clientSecret("test-secret")
         .httpTimeout(HTTP_TIMEOUT)
         .refreshThreshold(REFRESH_THRESHOLD)
@@ -373,19 +375,22 @@ class TokenManagerConcurrencyTest {
    */
   @Test
   void shouldHandleRapidExpirationCycles() throws Exception {
-    // Given - Configure token manager with short expiration
+    // Given - Configure token manager with mutable clock
+    MutableClock testClock = new MutableClock(Instant.now());
+
     TokenConfig shortExpirationConfig = TokenConfig.builder()
         .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
-        .clientId("test-client")
+        .clientId("expiration-test-" + UUID.randomUUID())
         .clientSecret("test-secret")
         .httpTimeout(HTTP_TIMEOUT)
-        .refreshThreshold(Duration.ofMillis(100)) // Short refresh threshold
+        .refreshThreshold(Duration.ofMillis(100))
+        .clock(testClock)
         .httpClient(httpClient)
         .build();
 
     OAuth2TokenManager timeoutManager = new OAuth2TokenManager(shortExpirationConfig);
 
-    // Set up first token that will expire quickly
+    // Set up first token with 5s expiry
     mockWebServer.enqueue(new MockResponse()
                               .setResponseCode(200)
                               .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
@@ -393,7 +398,7 @@ class TokenManagerConcurrencyTest {
             {
                 "access_token": "first-token",
                 "token_type": "Bearer",
-                "expires_in": 1
+                "expires_in": 5
             }
             """));
 
@@ -409,12 +414,12 @@ class TokenManagerConcurrencyTest {
             }
             """));
 
-    // Get first token and wait for it to expire
+    // Get first token
     String firstToken = timeoutManager.getToken();
     assertThat(firstToken).isEqualTo("first-token");
 
-    // Wait for token to expire
-    Thread.sleep(1100);
+    // Advance clock past expiry (no Thread.sleep needed)
+    testClock.advance(Duration.ofSeconds(6));
 
     // When - Multiple threads request token after expiration
     int threadCount = 5;
@@ -649,7 +654,7 @@ class TokenManagerConcurrencyTest {
     // Given - Configure token manager with short timeout
     TokenConfig shortTimeoutConfig = TokenConfig.builder()
         .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
-        .clientId("test-client")
+        .clientId("timeout-test-" + UUID.randomUUID())
         .clientSecret("test-secret")
         .httpTimeout(Duration.ofMillis(500)) // Short timeout
         .refreshThreshold(REFRESH_THRESHOLD)
@@ -869,7 +874,7 @@ class TokenManagerConcurrencyTest {
     // Configure short timeout for test
     TokenConfig shortTimeoutConfig = TokenConfig.builder()
         .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
-        .clientId("test-client")
+        .clientId("refresh-timeout-test-" + UUID.randomUUID())
         .clientSecret("test-secret")
         .httpTimeout(Duration.ofMillis(500)) // Very short timeout
         .refreshThreshold(REFRESH_THRESHOLD)
