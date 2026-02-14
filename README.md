@@ -216,14 +216,14 @@ try {
 
 ## Requirements
 
-- Java 25+ (sealed classes, pattern matching, records, virtual threads, unnamed variables)
+- Java 21+ (sealed classes, pattern matching, records, virtual threads)
 - Maven
 
 ### Tested with (pre-release)
 
 | Dependency | Version |
 |---|---|
-| JDK | 25 |
+| JDK | 21, 25 |
 | OkHttp | 5.0.0-alpha.14 |
 | Resilience4j | 2.2.0 |
 | Jackson | 2.18.2 |

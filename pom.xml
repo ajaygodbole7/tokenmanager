@@ -15,7 +15,7 @@
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-    <java.version>25</java.version>
+    <java.version>21</java.version>
 
     <!-- Core dependencies -->
     <jackson.version>2.18.2</jackson.version>

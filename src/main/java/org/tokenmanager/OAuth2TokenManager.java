@@ -643,7 +643,7 @@ public class OAuth2TokenManager implements AutoCloseable {
           metrics.getNumberOfFailedCalls(),
           metrics.getNumberOfSlowCalls(),
           metrics.getNumberOfNotPermittedCalls());
-    } catch (Exception _) {
+    } catch (Exception ignored) {
       log.debug("Could not retrieve circuit breaker metrics for client {}", config.getClientId());
     }
   }

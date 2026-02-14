@@ -68,7 +68,7 @@ class TokenManagerTest {
     // Create a unique HTTP client for each test
     httpClient = new OkHttpClient.Builder()
         .sslSocketFactory(clientCerts.sslSocketFactory(), clientCerts.trustManager())
-        .hostnameVerifier((_, _) -> true)
+        .hostnameVerifier((hostname, session) -> true)
         .connectTimeout(HTTP_TIMEOUT)
         .readTimeout(HTTP_TIMEOUT)
         .writeTimeout(HTTP_TIMEOUT)
