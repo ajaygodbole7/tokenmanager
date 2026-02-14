@@ -558,7 +558,8 @@ public class OAuth2TokenManager implements AutoCloseable {
    */
   private Retry createRetry() {
     IntervalFunction intervalFunction =
-        IntervalFunction.ofExponentialBackoff(INITIAL_RETRY_DELAY.toMillis());
+        IntervalFunction.ofExponentialRandomBackoff(
+            INITIAL_RETRY_DELAY.toMillis(), 2.0, 0.5);
 
     var retryConfig =
         RetryConfig.<OAuth2Token>custom()

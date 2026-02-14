@@ -3,6 +3,7 @@ package org.tokenmanager;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeoutException;
+import io.github.resilience4j.core.IntervalFunction;
 import okhttp3.OkHttpClient;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
@@ -1330,6 +1331,53 @@ class TokenManagerTest {
       assertThat(mockWebServer.getRequestCount()).isEqualTo(2);
     } finally {
       clockManager.close();
+    }
+  }
+
+  // --- Retry jitter tests ---
+
+  @Test
+  void shouldApplyJitterToRetryIntervals() {
+    IntervalFunction intervalFunction =
+        IntervalFunction.ofExponentialRandomBackoff(1000, 2.0, 0.5);
+
+    long firstValue = intervalFunction.apply(1);
+    boolean allIdentical = true;
+
+    for (int i = 0; i < 50; i++) {
+      long interval = intervalFunction.apply(1);
+      assertThat(interval).isBetween(500L, 1500L);
+      if (interval != firstValue) {
+        allIdentical = false;
+      }
+    }
+
+    assertThat(allIdentical)
+        .as("Jitter should produce varying intervals")
+        .isFalse();
+  }
+
+  @Test
+  void shouldApplyExponentialGrowthWithJitter() {
+    IntervalFunction intervalFunction =
+        IntervalFunction.ofExponentialRandomBackoff(1000, 2.0, 0.5);
+
+    // Attempt 1: base=1000, range=500-1500
+    for (int i = 0; i < 20; i++) {
+      long interval = intervalFunction.apply(1);
+      assertThat(interval).isBetween(500L, 1500L);
+    }
+
+    // Attempt 2: base=2000, range=1000-3000
+    for (int i = 0; i < 20; i++) {
+      long interval = intervalFunction.apply(2);
+      assertThat(interval).isBetween(1000L, 3000L);
+    }
+
+    // Attempt 3: base=4000, range=2000-6000
+    for (int i = 0; i < 20; i++) {
+      long interval = intervalFunction.apply(3);
+      assertThat(interval).isBetween(2000L, 6000L);
     }
   }
 }
