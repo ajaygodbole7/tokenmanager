@@ -51,7 +51,7 @@ Request request = new Request.Builder()
 
 ### Spring Boot
 
-Already using Spring Security? See [how TokenManager complements Spring Security OAuth2 Client](docs/spring-comparison.md).
+Already using Spring Security? See [how TokenManager complements Spring Security OAuth2 Client](spring-comparison.md).
 
 Register the token manager as a bean. Spring handles shutdown via `destroyMethod`.
 
