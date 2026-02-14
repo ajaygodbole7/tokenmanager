@@ -112,14 +112,14 @@ Override any default via `TokenConfig.builder()`.
 | Grant type | Enum | Required fields |
 |---|---|---|
 | Client Credentials | `CLIENT_CREDENTIALS` | (default — clientId + clientSecret) |
-| Password (ROPC) | `PASSWORD` | `username`, `password` |
+| Password (Resource Owner Password Credentials) | `PASSWORD` | `username`, `password` |
 | Authorization Code | `AUTHORIZATION_CODE` | `authorizationCode`, `redirectUri` |
 | Refresh Token | `REFRESH_TOKEN` | `refreshToken` |
 | JWT Bearer | `JWT_BEARER` | `assertion` |
 
 Implicit grant is not supported (OAuth2 spec discourages it for server-side flows).
 
-Password grant (ROPC) is supported for legacy and migration scenarios where the client is fully trusted. OAuth 2.1 omits ROPC and modern security guidance discourages its use. This library does not restrict your choice of grant type; you own the risk decision.
+Password grant - Resource Owner Password Credentials (ROPC) is supported for legacy and migration scenarios where the client is fully trusted. OAuth 2.1 omits this grant type and modern security guidance discourages its use. This library does not restrict your choice of grant type; you own the risk decision.
 
 TokenManager handles token endpoint exchanges only. Authorization redirects, PKCE flows, and token storage are your responsibility.
 
