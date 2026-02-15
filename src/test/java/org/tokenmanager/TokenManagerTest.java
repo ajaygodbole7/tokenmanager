@@ -8,6 +8,7 @@ import okhttp3.OkHttpClient;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
 import okhttp3.mockwebserver.RecordedRequest;
+import okhttp3.mockwebserver.SocketPolicy;
 import okhttp3.tls.HandshakeCertificates;
 import okhttp3.tls.HeldCertificate;
 import org.junit.jupiter.api.AfterEach;
@@ -213,11 +214,13 @@ class TokenManagerTest {
    */
   @Test
   void whenServerTimeout_thenThrowsServiceUnavailableException() throws Exception {
-    // Given: Create a new HTTP client with shorter timeout
+    // OkHttp read timeout is generous (2s) so the OkHttp call itself does not
+    // time out.  The CompletableFuture.get() timeout (httpTimeout=100ms) fires
+    // first, which is the behavior this test verifies.
     OkHttpClient timeoutClient = httpClient.newBuilder()
-        .connectTimeout(Duration.ofMillis(100))
-        .readTimeout(Duration.ofMillis(100))
-        .writeTimeout(Duration.ofMillis(100))
+        .connectTimeout(Duration.ofSeconds(2))
+        .readTimeout(Duration.ofSeconds(2))
+        .writeTimeout(Duration.ofSeconds(2))
         .build();
 
     TokenConfig shortTimeoutConfig = TokenConfig.builder()
@@ -232,11 +235,11 @@ class TokenManagerTest {
     OAuth2TokenManager timeoutManager = new OAuth2TokenManager(shortTimeoutConfig);
 
     try {
-      // And: Server configured to delay response
+      // Server delays headers longer than the CF-level httpTimeout
       mockWebServer.enqueue(new MockResponse()
                                 .setResponseCode(200)
                                 .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
-                                .setHeadersDelay(150, TimeUnit.MILLISECONDS) // Delay headers instead of body
+                                .setHeadersDelay(500, TimeUnit.MILLISECONDS)
                                 .setBody("""
                 {
                     "access_token": "test-token",
@@ -245,7 +248,7 @@ class TokenManagerTest {
                 }
                 """));
 
-      // When/Then: Client requests a token, should throw timeout exception
+      // CF-level timeout fires before OkHttp or retry
       assertThatThrownBy(() -> timeoutManager.getToken())
           .isInstanceOf(ServiceUnavailableException.class)
           .hasMessage("Token refresh timed out")
@@ -907,8 +910,10 @@ class TokenManagerTest {
   // --- Resilience tests ---
 
   @Test
-  void shouldRetryAndSucceedAfterTransientFailures() throws Exception {
-    // First 2 calls return 500 (retryable), third returns 200
+  void shouldRecoverAcrossCallsAfterServerErrors() throws Exception {
+    // 500 errors throw ServiceUnavailableException (not retried within a single
+    // getToken() call — retry only applies to network-level IOExceptions).
+    // Each getToken() call is independent.
     mockWebServer.enqueue(new MockResponse()
         .setResponseCode(500)
         .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
@@ -938,21 +943,39 @@ class TokenManagerTest {
             }
             """));
 
-    // ServiceUnavailableException is not retried by default config (only IOException/TimeoutException)
-    // The retry config retries on IOException and TimeoutException, but ServiceUnavailableException
-    // (thrown for 500s) is a RuntimeException, so it won't be retried. The call should fail.
-    // Let's verify the behavior: first getToken() fails because 500 → ServiceUnavailableException is not retried
     assertThatThrownBy(() -> tokenManager.getToken())
         .isInstanceOf(ServiceUnavailableException.class);
 
-    // Second call hits the second 500
     assertThatThrownBy(() -> tokenManager.getToken())
         .isInstanceOf(ServiceUnavailableException.class);
 
-    // Third call succeeds with the 200
     String token = tokenManager.getToken();
     assertThat(token).isEqualTo("retry-success-token");
 
+    assertThat(mockWebServer.getRequestCount()).isEqualTo(3);
+  }
+
+  @Test
+  void shouldRetryOnNetworkFailureAndSucceed() throws Exception {
+    // First two attempts disconnect (IOException), retry kicks in automatically.
+    // Third attempt succeeds. All within a single getToken() call.
+    mockWebServer.enqueue(new MockResponse()
+        .setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST));
+    mockWebServer.enqueue(new MockResponse()
+        .setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST));
+    mockWebServer.enqueue(new MockResponse()
+        .setResponseCode(200)
+        .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+        .setBody("""
+            {
+                "access_token": "recovered-token",
+                "token_type": "Bearer",
+                "expires_in": 3600
+            }
+            """));
+
+    String token = tokenManager.getToken();
+    assertThat(token).isEqualTo("recovered-token");
     assertThat(mockWebServer.getRequestCount()).isEqualTo(3);
   }
 

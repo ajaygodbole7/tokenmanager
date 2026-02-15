@@ -14,6 +14,7 @@ import io.github.resilience4j.retry.Retry;
 import io.github.resilience4j.retry.RetryConfig;
 import io.github.resilience4j.retry.RetryRegistry;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
@@ -303,7 +304,7 @@ public class OAuth2TokenManager implements AutoCloseable {
             try {
               return requestNewToken();
             } catch (IOException e) {
-              throw new ServiceUnavailableException("Failed to refresh token", e);
+              throw new UncheckedIOException(e);
             }
           })
           .withRetry(retry)
@@ -594,7 +595,8 @@ public class OAuth2TokenManager implements AutoCloseable {
             .minimumNumberOfCalls(MINIMUM_CALLS)
             .waitDurationInOpenState(WAIT_DURATION)
             .permittedNumberOfCallsInHalfOpenState(HALF_OPEN_CALLS)
-            .recordException(e -> e instanceof ServiceUnavailableException)
+            .recordException(e -> e instanceof ServiceUnavailableException
+                || e instanceof UncheckedIOException)
             .ignoreExceptions(RateLimitedException.class)
             .build();
 
@@ -619,7 +621,7 @@ public class OAuth2TokenManager implements AutoCloseable {
         RetryConfig.<OAuth2Token>custom()
             .maxAttempts(MAX_RETRY_ATTEMPTS)
             .intervalFunction(intervalFunction)
-            .retryOnException(e -> e instanceof IOException || e instanceof TimeoutException)
+            .retryOnException(e -> e instanceof UncheckedIOException)
             .build();
 
     RetryRegistry registry = RetryRegistry.of(retryConfig);
