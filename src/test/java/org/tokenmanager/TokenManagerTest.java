@@ -1274,6 +1274,167 @@ class TokenManagerTest {
   }
 
   @Test
+  void shouldThrowOn500WhenTokenExpired() throws Exception {
+    MutableClock testClock = new MutableClock(Instant.now());
+
+    TokenConfig testConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("500-expired-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(Duration.ofSeconds(10))
+        .clock(testClock)
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager manager = new OAuth2TokenManager(testConfig);
+
+    try {
+      // Get initial token with 60s expiry
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(200)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {
+                  "access_token": "expiring-token",
+                  "token_type": "Bearer",
+                  "expires_in": 60
+              }
+              """));
+
+      manager.getToken();
+
+      // Advance clock past expiry
+      testClock.advance(Duration.ofSeconds(61));
+
+      // Server responds with 500
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(500)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {
+                  "error": "server_error",
+                  "error_description": "Internal server error"
+              }
+              """));
+
+      // Token expired + refresh failure → must throw, no fallback possible
+      assertThatThrownBy(manager::getToken)
+          .isInstanceOf(ServiceUnavailableException.class);
+    } finally {
+      manager.close();
+    }
+  }
+
+  @Test
+  void shouldThrowWhenTokenAtExactExpiry() throws Exception {
+    Instant baseTime = Instant.parse("2025-06-01T00:00:00Z");
+    MutableClock testClock = new MutableClock(baseTime);
+
+    TokenConfig testConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("exact-expiry-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(Duration.ofSeconds(10))
+        .clock(testClock)
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager manager = new OAuth2TokenManager(testConfig);
+
+    try {
+      // Token expires at baseTime + 60s
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(200)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {
+                  "access_token": "boundary-token",
+                  "token_type": "Bearer",
+                  "expires_in": 60
+              }
+              """));
+
+      manager.getToken();
+
+      // Advance clock to exactly expiresAt (now == expiresAt)
+      testClock.advance(Duration.ofSeconds(60));
+
+      // Refresh fails
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(500)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {
+                  "error": "server_error",
+                  "error_description": "Internal server error"
+              }
+              """));
+
+      // now == expiresAt → token is expired, no fallback
+      assertThatThrownBy(manager::getToken)
+          .isInstanceOf(ServiceUnavailableException.class);
+    } finally {
+      manager.close();
+    }
+  }
+
+  @Test
+  void shouldFallbackWhenTokenOneMilliBeforeExpiry() throws Exception {
+    Instant baseTime = Instant.parse("2025-06-01T00:00:00Z");
+    MutableClock testClock = new MutableClock(baseTime);
+
+    TokenConfig testConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("just-before-expiry-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(Duration.ofSeconds(10))
+        .clock(testClock)
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager manager = new OAuth2TokenManager(testConfig);
+
+    try {
+      // Token expires at baseTime + 60s
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(200)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {
+                  "access_token": "almost-expired-token",
+                  "token_type": "Bearer",
+                  "expires_in": 60
+              }
+              """));
+
+      manager.getToken();
+
+      // Advance to 1ms before expiry — still valid
+      testClock.advance(Duration.ofSeconds(60).minusMillis(1));
+
+      // Refresh fails
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(500)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {
+                  "error": "server_error",
+                  "error_description": "Internal server error"
+              }
+              """));
+
+      // now < expiresAt → fallback to cached token
+      String fallback = manager.getToken();
+      assertThat(fallback).isEqualTo("almost-expired-token");
+    } finally {
+      manager.close();
+    }
+  }
+
+  @Test
   void shouldRefreshAtExactThresholdBoundary() throws Exception {
     MutableClock testClock = new MutableClock(Instant.now());
 
@@ -1331,6 +1492,124 @@ class TokenManagerTest {
       assertThat(mockWebServer.getRequestCount()).isEqualTo(2);
     } finally {
       clockManager.close();
+    }
+  }
+
+  // --- Client auth method tests ---
+
+  @Test
+  void shouldSendCredentialsAsBasicAuthHeader() throws Exception {
+    TokenConfig basicConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("basic-client-" + UUID.randomUUID())
+        .clientSecret("basic-secret")
+        .clientAuthMethod(ClientAuthMethod.CLIENT_SECRET_BASIC)
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(REFRESH_THRESHOLD)
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager basicManager = new OAuth2TokenManager(basicConfig);
+
+    try {
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(200)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {
+                  "access_token": "basic-token",
+                  "token_type": "Bearer",
+                  "expires_in": 3600
+              }
+              """));
+
+      String token = basicManager.getToken();
+      assertThat(token).isEqualTo("basic-token");
+
+      RecordedRequest request = mockWebServer.takeRequest();
+      String authHeader = request.getHeader("Authorization");
+      assertThat(authHeader).startsWith("Basic ");
+
+      // Decode and verify credentials
+      String decoded = new String(
+          java.util.Base64.getDecoder().decode(authHeader.substring(6)),
+          java.nio.charset.StandardCharsets.UTF_8);
+      assertThat(decoded).startsWith("basic-client-");
+      assertThat(decoded).endsWith(":basic-secret");
+
+      // client_id in body for provider compatibility, client_secret omitted
+      String body = request.getBody().readUtf8();
+      assertThat(body).contains("grant_type=client_credentials");
+      assertThat(body).contains("client_id=");
+      assertThat(body).doesNotContain("client_secret=");
+    } finally {
+      basicManager.close();
+    }
+  }
+
+  @Test
+  void shouldSendCredentialsInFormBodyByDefault() throws Exception {
+    // The default tokenManager uses CLIENT_SECRET_POST (default)
+    mockWebServer.enqueue(new MockResponse()
+        .setResponseCode(200)
+        .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+        .setBody("""
+            {
+                "access_token": "post-token",
+                "token_type": "Bearer",
+                "expires_in": 3600
+            }
+            """));
+
+    tokenManager.getToken();
+
+    RecordedRequest request = mockWebServer.takeRequest();
+
+    // No Authorization header for Basic auth
+    assertThat(request.getHeader("Authorization")).isNull();
+
+    // Credentials in form body
+    String body = request.getBody().readUtf8();
+    assertThat(body).contains("client_id=");
+    assertThat(body).contains("client_secret=test-secret");
+  }
+
+  @Test
+  void shouldHandleSpecialCharactersInBasicAuthCredentials() throws Exception {
+    TokenConfig specialConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("client:with:colons")
+        .clientSecret("secret/with+special=chars")
+        .clientAuthMethod(ClientAuthMethod.CLIENT_SECRET_BASIC)
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(REFRESH_THRESHOLD)
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager specialManager = new OAuth2TokenManager(specialConfig);
+
+    try {
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(200)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {
+                  "access_token": "special-token",
+                  "token_type": "Bearer",
+                  "expires_in": 3600
+              }
+              """));
+
+      specialManager.getToken();
+
+      RecordedRequest request = mockWebServer.takeRequest();
+      String authHeader = request.getHeader("Authorization");
+      String decoded = new String(
+          java.util.Base64.getDecoder().decode(authHeader.substring(6)),
+          java.nio.charset.StandardCharsets.UTF_8);
+      assertThat(decoded).isEqualTo("client:with:colons:secret/with+special=chars");
+    } finally {
+      specialManager.close();
     }
   }
 
@@ -1398,6 +1677,125 @@ class TokenManagerTest {
     tokenManager.close();
     tokenManager.close();
     // No exception — idempotent
+  }
+
+  // --- TokenConfig safety tests ---
+
+  @Test
+  void toStringShouldNotContainSecrets() {
+    TokenConfig config = TokenConfig.builder()
+        .tokenEndpoint("https://auth.example.com/token")
+        .clientId("my-client")
+        .clientSecret("super-secret-value")
+        .grantType(OAuth2GrantType.PASSWORD)
+        .username("user")
+        .password("hunter2")
+        .build();
+
+    String str = config.toString();
+    assertThat(str).contains("my-client");
+    assertThat(str).contains("user");
+    assertThat(str).doesNotContain("super-secret-value");
+    assertThat(str).doesNotContain("hunter2");
+  }
+
+  @Test
+  void shouldRejectNullClock() {
+    assertThatThrownBy(() -> TokenConfig.builder()
+        .tokenEndpoint("https://auth.example.com/token")
+        .clientId("client")
+        .clientSecret("secret")
+        .clock(null)
+        .build())
+        .isInstanceOf(NullPointerException.class);
+  }
+
+  @Test
+  void shouldRejectNullClientAuthMethod() {
+    assertThatThrownBy(() -> TokenConfig.builder()
+        .tokenEndpoint("https://auth.example.com/token")
+        .clientId("client")
+        .clientSecret("secret")
+        .clientAuthMethod(null)
+        .build())
+        .isInstanceOf(NullPointerException.class);
+  }
+
+  @Test
+  void shouldRejectNullScope() {
+    assertThatThrownBy(() -> TokenConfig.builder()
+        .tokenEndpoint("https://auth.example.com/token")
+        .clientId("client")
+        .clientSecret("secret")
+        .scope(null)
+        .build())
+        .isInstanceOf(NullPointerException.class);
+  }
+
+  @Test
+  void shouldRejectNullGrantType() {
+    assertThatThrownBy(() -> TokenConfig.builder()
+        .tokenEndpoint("https://auth.example.com/token")
+        .clientId("client")
+        .clientSecret("secret")
+        .grantType(null)
+        .build())
+        .isInstanceOf(NullPointerException.class);
+  }
+
+  @Test
+  void tokenToStringShouldNotContainTokenValue() {
+    OAuth2Token token = new OAuth2Token(
+        "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.secret-payload",
+        OAuth2TokenType.BEARER,
+        Instant.now(),
+        Instant.now().plusSeconds(3600),
+        Set.of("read"));
+
+    String str = token.toString();
+    assertThat(str).doesNotContain("eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9");
+    assertThat(str).doesNotContain("secret-payload");
+    assertThat(str).contains("Bearer");
+    assertThat(str).contains("read");
+  }
+
+  @Test
+  void exceptionMessagesShouldNotContainSecrets() throws Exception {
+    String secretClientSecret = "super-secret-credential-value";
+
+    TokenConfig config = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("exc-test-" + UUID.randomUUID())
+        .clientSecret(secretClientSecret)
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(REFRESH_THRESHOLD)
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager manager = new OAuth2TokenManager(config);
+
+    try {
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(401)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {
+                  "error": "invalid_client",
+                  "error_description": "Bad credentials"
+              }
+              """));
+
+      assertThatThrownBy(manager::getToken)
+          .isInstanceOf(TokenException.class)
+          .satisfies(e -> {
+            assertThat(e.getMessage()).doesNotContain(secretClientSecret);
+            if (e.getCause() != null) {
+              assertThat(e.getCause().getMessage()).doesNotContain(secretClientSecret);
+            }
+          });
+    } finally {
+      manager.close();
+    }
   }
 
 }

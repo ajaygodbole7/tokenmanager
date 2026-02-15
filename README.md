@@ -105,11 +105,11 @@ public class PaymentService {
 ### Defaults
 
 - Grant type: `CLIENT_CREDENTIALS`
-- HTTP timeout: 10s
-- Refresh threshold: 30s before expiry
-- Scope: none (set via `.scope(Set.of("read", "write"))`)
-- Client authentication: form POST (`client_secret_post`). Some providers require HTTP Basic (`client_secret_basic`) — not yet supported
-- HTTPS required (non-HTTPS endpoints rejected at construction time)
+  - HTTP timeout: 10s
+  - Refresh threshold: 30s before expiry
+  - Scope: none (set via `.scope(Set.of("read", "write"))`)
+  - Client authentication: form POST (`client_secret_post`). Set `.clientAuthMethod(ClientAuthMethod.CLIENT_SECRET_BASIC)` for providers that require HTTP Basic
+  - HTTPS required (non-HTTPS endpoints rejected at construction time)
 
 Override any default via `TokenConfig.builder()` unless noted.
 
@@ -119,7 +119,7 @@ Override any default via `TokenConfig.builder()` unless noted.
 |---|---|---|
 | Client Credentials | `CLIENT_CREDENTIALS` | (default — clientId + clientSecret) |
 | Password (Resource Owner Password Credentials) | `PASSWORD` | `username`, `password` |
-| Authorization Code | `AUTHORIZATION_CODE` | `authorizationCode`, `redirectUri`, `codeVerifier` (PKCE) |
+| Authorization Code | `AUTHORIZATION_CODE` | `authorizationCode`, `redirectUri`; optional: `codeVerifier` (PKCE) |
 | Refresh Token | `REFRESH_TOKEN` | `refreshToken` |
 | JWT Bearer | `JWT_BEARER` | `assertion` |
 
@@ -166,6 +166,18 @@ TokenConfig.builder()
     .build();
 ```
 
+### Client authentication method
+
+The default is `client_secret_post` (credentials in form body). For providers that require HTTP Basic authentication (Azure AD, some Keycloak configurations):
+
+```java
+TokenConfig config = TokenConfig.builder()
+    .clientId("id").clientSecret("secret")
+    .tokenEndpoint("https://auth.example.com/token")
+    .clientAuthMethod(ClientAuthMethod.CLIENT_SECRET_BASIC)
+    .build();
+```
+
 ### Custom HTTP client
 
 The library creates its own OkHttp client by default. To supply a custom HTTP client (e.g., for custom TLS or interceptors):
@@ -208,12 +220,12 @@ try {
 ## Concurrency and resilience
 
 - `getToken()` is thread-safe and may be called concurrently from any number of threads
-- `getToken()` is a blocking call. Tokens are cached in-memory per `OAuth2TokenManager` instance (not shared across JVMs)
-- At most one in-flight refresh per manager instance at a time; concurrent callers share it. No thread storms, no duplicate fetches
-- If refresh fails but the cached token is still valid, `getToken()` returns the cached token; otherwise throws `TokenException`
-- Circuit breaker opens after consecutive failures, 60s cooldown
-- Retry with exponential backoff and ±50% jitter, 3 attempts
-- Rate-limited (429) responses do not trip the circuit breaker and are not retried. If the cached token is still valid, `getToken()` returns it
+  - `getToken()` is a blocking call. Tokens are cached in-memory per `OAuth2TokenManager` instance (not shared across JVMs)
+  - At most one in-flight refresh per manager instance at a time; concurrent callers share it. No thread storms, no duplicate fetches
+  - If refresh fails but the cached token is still valid, `getToken()` returns the cached token; otherwise throws `TokenException`
+  - Circuit breaker opens after consecutive failures, 60s cooldown
+  - Retry with exponential backoff and ±50% jitter, 3 attempts
+  - Rate-limited (429) responses do not trip the circuit breaker and are not retried. If the cached token is still valid, `getToken()` returns it
 
 ## Security
 
@@ -222,13 +234,13 @@ Tokens are stored in-memory only and never persisted to disk.
 ## Resource management
 
 - `OAuth2TokenManager` implements `AutoCloseable`
-- `close()` is idempotent
-- `getToken()` after `close()` throws `IllegalStateException`
+  - `close()` is idempotent
+  - `getToken()` after `close()` throws `IllegalStateException`
 
 ## Requirements
 
 - Java 21+ (sealed classes, pattern matching, records, virtual threads)
-- Maven
+  - Maven
 
 ### Tested with (pre-release)
 

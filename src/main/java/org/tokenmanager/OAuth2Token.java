@@ -99,4 +99,12 @@ public record OAuth2Token(
   public boolean hasScopes(Set<String> requiredScopes) {
     return scopes.containsAll(requiredScopes);
   }
+
+  @Override
+  public String toString() {
+    return "OAuth2Token[tokenType=" + tokenType
+        + ", issuedAt=" + issuedAt
+        + ", expiresAt=" + expiresAt
+        + ", scopes=" + scopes + "]";
+  }
 }

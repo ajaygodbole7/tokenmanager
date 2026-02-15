@@ -57,7 +57,7 @@ public class AppConfig {
 | Graceful degradation | No built-in graceful degradation | Yes (returns cached token if still valid; otherwise fails fast with classified error) |
 | HTTPS enforcement | No built-in constructor-time enforcement | Yes (rejects non-HTTPS at construction) |
 | Error classification | Error codes + general exception types | Sealed hierarchy (4 subclasses, exhaustive switch) |
-| Client auth methods | Multiple (e.g., Basic, Post; configurable) | `client_secret_post` only *(client_secret_basic planned)* |
+| Client auth methods | Multiple (e.g., Basic, Post; configurable) | `client_secret_post` (default), `client_secret_basic` |
 | Framework dependency | Spring | None |
 | Reactive support | Yes (WebFlux) | No (blocking) |
 | Token persistence | Yes (JDBC) | No (in-memory only) |

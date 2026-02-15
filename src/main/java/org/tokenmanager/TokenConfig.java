@@ -1,5 +1,6 @@
 package org.tokenmanager;
 
+import java.net.URI;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.Collections;
@@ -7,11 +8,16 @@ import java.util.Set;
 import lombok.Builder;
 import lombok.Builder.Default;
 import lombok.NonNull;
+import lombok.ToString;
 import lombok.Value;
 import okhttp3.OkHttpClient;
 
 @Value
 @Builder
+@ToString(exclude = {
+    "clientSecret", "password", "authorizationCode",
+    "codeVerifier", "refreshToken", "assertion"
+})
 public class TokenConfig {
 
   // Timeout for individual HTTP operations
@@ -23,23 +29,24 @@ public class TokenConfig {
   @NonNull String clientId;
   @NonNull String clientSecret;
 
-  @Default OAuth2GrantType grantType = OAuth2GrantType.CLIENT_CREDENTIALS;
+  @NonNull @Default OAuth2GrantType grantType = OAuth2GrantType.CLIENT_CREDENTIALS;
 
-  @Default Set<String> scope = Collections.emptySet();
+  @NonNull @Default Set<String> scope = Collections.emptySet();
 
-  @Default Duration refreshThreshold = DEFAULT_REFRESH_THRESHOLD;
+  @NonNull @Default Duration refreshThreshold = DEFAULT_REFRESH_THRESHOLD;
 
-  @Default Duration httpTimeout = DEFAULT_HTTP_TIMEOUT;
+  @NonNull @Default Duration httpTimeout = DEFAULT_HTTP_TIMEOUT;
 
-  @Default Clock clock = Clock.systemUTC();
+  @NonNull @Default Clock clock = Clock.systemUTC();
+
+  @NonNull @Default ClientAuthMethod clientAuthMethod = ClientAuthMethod.CLIENT_SECRET_POST;
 
   // Fields for other grant types
   String username; // For password grant
   String password;
   String authorizationCode; // For authorization_code grant
   String redirectUri;
-  String codeVerifier; // PKCE
-  String state;
+  String codeVerifier; // PKCE (optional)
   String refreshToken; // For refresh_token grant
   String assertion; // For JWT_BEARER
 
@@ -53,7 +60,8 @@ public class TokenConfig {
     if (httpTimeout.isNegative() || httpTimeout.isZero()) {
       throw new IllegalArgumentException("httpTimeout must be positive");
     }
-    if (!tokenEndpoint.toLowerCase().startsWith("https://")) {
+    URI uri = URI.create(tokenEndpoint);
+    if (!"https".equalsIgnoreCase(uri.getScheme())) {
       throw new IllegalArgumentException("tokenEndpoint must use HTTPS");
     }
 

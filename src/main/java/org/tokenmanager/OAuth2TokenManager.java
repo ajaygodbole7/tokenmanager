@@ -14,6 +14,7 @@ import io.github.resilience4j.retry.Retry;
 import io.github.resilience4j.retry.RetryConfig;
 import io.github.resilience4j.retry.RetryRegistry;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -29,6 +30,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.locks.ReentrantLock;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
+import okhttp3.Credentials;
 import okhttp3.FormBody;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -324,9 +326,23 @@ public class OAuth2TokenManager implements AutoCloseable {
    */
   private OAuth2Token requestNewToken() throws IOException {
     FormBody.Builder formBuilder = new FormBody.Builder()
-        .add("grant_type", config.getGrantType().toString())
-        .add("client_id", config.getClientId())
-        .add("client_secret", config.getClientSecret());
+        .add("grant_type", config.getGrantType().toString());
+
+    Request.Builder requestBuilder = new Request.Builder()
+        .url(config.getTokenEndpoint());
+
+    switch (config.getClientAuthMethod()) {
+      case CLIENT_SECRET_POST -> {
+        formBuilder.add("client_id", config.getClientId());
+        formBuilder.add("client_secret", config.getClientSecret());
+      }
+      case CLIENT_SECRET_BASIC -> {
+        requestBuilder.header("Authorization",
+            Credentials.basic(config.getClientId(), config.getClientSecret(),
+                StandardCharsets.UTF_8));
+        formBuilder.add("client_id", config.getClientId());
+      }
+    }
 
     addGrantTypeSpecificParams(formBuilder);
 
@@ -334,12 +350,9 @@ public class OAuth2TokenManager implements AutoCloseable {
       formBuilder.add("scope", config.getScopeString());
     }
 
-    Request request = new Request.Builder()
-        .url(config.getTokenEndpoint())
-        .post(formBuilder.build())
-        .build();
+    requestBuilder.post(formBuilder.build());
 
-    try (Response response = httpClient.newCall(request).execute()) {
+    try (Response response = httpClient.newCall(requestBuilder.build()).execute()) {
       if (!response.isSuccessful() || response.body() == null) {
         handleErrorResponse(response);
       }
@@ -413,7 +426,7 @@ public class OAuth2TokenManager implements AutoCloseable {
     try {
       return objectMapper.readTree(errorBody);
     } catch (Exception e) {
-      log.error("Failed to parse error response: {}", errorBody, e);
+      log.error("Failed to parse error response as JSON for client {}", config.getClientId(), e);
       return null;
     }
   }
@@ -461,7 +474,7 @@ public class OAuth2TokenManager implements AutoCloseable {
   private OAuth2Token parseTokenResponse(Response response) throws IOException {
     String responseBody = readResponseBodySafely(response);
     JsonNode node = parseResponseBodyAsJson(responseBody);
-    validateTokenFields(node, responseBody);
+    validateTokenFields(node);
     return createOAuth2TokenFromNode(node);
   }
 
@@ -484,7 +497,7 @@ public class OAuth2TokenManager implements AutoCloseable {
     try {
       return objectMapper.readTree(responseBody);
     } catch (IOException e) {
-      log.error("Failed to parse token response as JSON: {}", responseBody, e);
+      log.error("Failed to parse token response as JSON for client {}", config.getClientId(), e);
       throw new ServiceUnavailableException("Malformed JSON response", e);
     }
   }
@@ -493,16 +506,16 @@ public class OAuth2TokenManager implements AutoCloseable {
   /**
    * Validates that required fields (access_token, expires_in) are present and valid.
    */
-  private void validateTokenFields(JsonNode node, String responseBody) {
+  private void validateTokenFields(JsonNode node) {
     JsonNode accessTokenNode = node.get("access_token");
     if (accessTokenNode == null || accessTokenNode.asText().isBlank()) {
-      log.error("Response missing 'access_token': {}", responseBody);
+      log.error("Token response missing 'access_token' for client {}", config.getClientId());
       throw new ServiceUnavailableException("Missing access_token in response");
     }
 
     JsonNode expiresInNode = node.get("expires_in");
     if (expiresInNode == null || !expiresInNode.canConvertToLong()) {
-      log.error("Response missing or invalid 'expires_in': {}", responseBody);
+      log.error("Token response missing or invalid 'expires_in' for client {}", config.getClientId());
       throw new ServiceUnavailableException("Missing or invalid expires_in in response");
     }
   }
