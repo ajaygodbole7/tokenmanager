@@ -1,6 +1,5 @@
 package org.tokenmanager;
 
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -133,15 +132,9 @@ public enum OAuth2ErrorCode {
 
   public static OAuth2ErrorCode fromString(String value) {
     if (value == null) {
-      throw new IllegalArgumentException("Error Code cannot be null");
+      return null;
     }
-    OAuth2ErrorCode type = ERROR_CODE_MAP.get(value);
-    if (type == null) {
-      throw new IllegalArgumentException(
-          String.format(
-              "Unknown error code: %s. Valid values are: %s", value, Arrays.toString(values())));
-    }
-    return type;
+    return ERROR_CODE_MAP.get(value);
   }
 
   @Override

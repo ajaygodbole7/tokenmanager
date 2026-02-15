@@ -620,6 +620,45 @@ class TokenManagerTest {
         .hasMessage("Request was malformed");
   }
 
+  @Test
+  void shouldClassifyUnknownOAuth2ErrorCodeByHttpStatus() throws Exception {
+    // Non-standard error codes (e.g. login_required, consent_required) must not
+    // leak IllegalArgumentException — they fall back to HTTP status classification.
+
+    // 400 with unknown error code → InvalidEndpointException (non-auth 4xx fallback)
+    mockWebServer.enqueue(new MockResponse()
+        .setResponseCode(400)
+        .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+        .setBody("""
+            {"error": "login_required", "error_description": "User must re-authenticate"}
+            """));
+
+    assertThatThrownBy(() -> tokenManager.getToken())
+        .isInstanceOf(InvalidEndpointException.class);
+
+    // 401 with unknown error code → InvalidCredentialsException
+    mockWebServer.enqueue(new MockResponse()
+        .setResponseCode(401)
+        .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+        .setBody("""
+            {"error": "consent_required", "error_description": "User consent needed"}
+            """));
+
+    assertThatThrownBy(() -> tokenManager.getToken())
+        .isInstanceOf(InvalidCredentialsException.class);
+
+    // 500 with unknown error code → ServiceUnavailableException
+    mockWebServer.enqueue(new MockResponse()
+        .setResponseCode(500)
+        .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+        .setBody("""
+            {"error": "custom_server_error", "error_description": "Something broke"}
+            """));
+
+    assertThatThrownBy(() -> tokenManager.getToken())
+        .isInstanceOf(ServiceUnavailableException.class);
+  }
+
   // --- TokenConfig.validate() tests ---
 
   @Test

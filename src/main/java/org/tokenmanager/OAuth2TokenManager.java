@@ -418,7 +418,7 @@ public class OAuth2TokenManager implements AutoCloseable {
     String errorBody = readErrorBodySafely(response);
     JsonNode errorNode = tryParseErrorBody(errorBody);
     if (errorNode != null && errorNode.has("error")) {
-      classifyAndThrowOAuth2Error(errorNode, errorBody);
+      classifyAndThrowOAuth2Error(response, errorNode, errorBody);
     } else {
       fallbackToHttpStatusHandling(response, errorBody);
     }
@@ -446,9 +446,19 @@ public class OAuth2TokenManager implements AutoCloseable {
 
   /**
    * Classifies the OAuth2 error from the given errorNode and throws the appropriate exception.
+   * Unknown error codes fall back to HTTP status classification so callers always see a
+   * TokenException subclass, never an IllegalArgumentException.
    */
-  private void classifyAndThrowOAuth2Error(JsonNode errorNode, String errorBody) {
-    OAuth2ErrorCode errorCode = OAuth2ErrorCode.fromString(errorNode.get("error").asText());
+  private void classifyAndThrowOAuth2Error(Response response, JsonNode errorNode, String errorBody) {
+    String rawError = errorNode.get("error").asText();
+    OAuth2ErrorCode errorCode = OAuth2ErrorCode.fromString(rawError);
+
+    if (errorCode == null) {
+      log.warn("Unknown OAuth2 error code '{}' from server, falling back to HTTP status classification", rawError);
+      fallbackToHttpStatusHandling(response, errorBody);
+      return; // unreachable — fallback always throws
+    }
+
     String errorDescription = errorNode.has("error_description")
         ? errorNode.get("error_description").asText()
         : errorCode.toString();
