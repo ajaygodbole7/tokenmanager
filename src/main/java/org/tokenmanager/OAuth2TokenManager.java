@@ -219,6 +219,11 @@ public class OAuth2TokenManager implements AutoCloseable {
           && !(cause instanceof ServiceUnavailableException)) {
         throw te;
       }
+      // Guard against non-TokenException RuntimeExceptions (e.g. UncheckedIOException
+      // from retry exhaustion) leaking outside the sealed hierarchy.
+      if (cause instanceof RuntimeException re && !(cause instanceof TokenException)) {
+        throw new ServiceUnavailableException("Unexpected runtime failure", re);
+      }
       throw new ServiceUnavailableException("Service is unavailable", cause);
     } catch (TimeoutException e) {
       refreshOperation.cancel(true);
