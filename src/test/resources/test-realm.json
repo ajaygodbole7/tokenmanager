@@ -1,0 +1,56 @@
+{
+  "realm": "test-realm",
+  "enabled": true,
+  "accessTokenLifespan": 60,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "clients": [
+    {
+      "clientId": "test-service-client",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "test-service-secret",
+      "serviceAccountsEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "standardFlowEnabled": false
+    },
+    {
+      "clientId": "test-password-client",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "test-password-secret",
+      "serviceAccountsEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": false
+    },
+    {
+      "clientId": "test-authcode-client",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "test-authcode-secret",
+      "serviceAccountsEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "standardFlowEnabled": true,
+      "fullScopeAllowed": true,
+      "redirectUris": [
+        "http://localhost/callback"
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "testuser",
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "testpass",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}

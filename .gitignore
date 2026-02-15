@@ -213,4 +213,5 @@ docs/
 # Legacy Test Fixtures
 ######################
 src/test/resources/*.json
+!src/test/resources/test-realm.json
 

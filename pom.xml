@@ -29,6 +29,7 @@
     <junit.version>5.11.3</junit.version>
     <assertj.version>3.27.7</assertj.version>
     <wiremock.version>3.10.0</wiremock.version>
+    <testcontainers-keycloak.version>4.1.1</testcontainers-keycloak.version>
   </properties>
 
   <dependencies>
@@ -111,6 +112,12 @@
       <version>${okhttp.version}</version>
       <scope>test</scope>
     </dependency>
+    <dependency>
+      <groupId>com.github.dasniko</groupId>
+      <artifactId>testcontainers-keycloak</artifactId>
+      <version>${testcontainers-keycloak.version}</version>
+      <scope>test</scope>
+    </dependency>
 
   </dependencies>
 
@@ -146,6 +153,21 @@
             <disable>false</disable>
           </consoleOutputReporter>
         </configuration>
+      </plugin>
+
+      <!-- Integration Testing Plugin -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-failsafe-plugin</artifactId>
+        <version>3.5.2</version>
+        <executions>
+          <execution>
+            <goals>
+              <goal>integration-test</goal>
+              <goal>verify</goal>
+            </goals>
+          </execution>
+        </executions>
       </plugin>
 
       <!-- Source Plugin -->
