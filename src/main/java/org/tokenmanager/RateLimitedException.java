@@ -1,11 +1,20 @@
 package org.tokenmanager;
 
+import java.time.Duration;
+
 public final class RateLimitedException extends TokenException {
-  public RateLimitedException(String message) {
+  private final Duration retryAfter;
+
+  public RateLimitedException(String message, Duration retryAfter) {
     super(message);
+    this.retryAfter = retryAfter;
   }
 
-  public RateLimitedException(String message, Throwable cause) {
-    super(message, cause);
+  /**
+   * Returns the server-suggested wait time before retrying, or null if the
+   * server did not include a Retry-After header.
+   */
+  public Duration getRetryAfter() {
+    return retryAfter;
   }
 }

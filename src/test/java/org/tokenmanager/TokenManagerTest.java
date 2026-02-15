@@ -1138,7 +1138,11 @@ class TokenManagerTest {
       // Should throw because token is expired — no fallback possible
       assertThatThrownBy(manager::getToken)
           .isInstanceOf(RateLimitedException.class)
-          .hasMessageContaining("Rate limited");
+          .hasMessageContaining("Rate limited")
+          .satisfies(ex -> {
+            RateLimitedException rle = (RateLimitedException) ex;
+            assertThat(rle.getRetryAfter()).isEqualTo(Duration.ofSeconds(60));
+          });
     } finally {
       manager.close();
     }
@@ -1206,6 +1210,112 @@ class TokenManagerTest {
 
       String refreshed = manager.getToken();
       assertThat(refreshed).isEqualTo("refreshed-token");
+    } finally {
+      manager.close();
+    }
+  }
+
+  @Test
+  void shouldClassify429AsRateLimitedEvenWithJsonBody() throws Exception {
+    MutableClock testClock = new MutableClock(Instant.now());
+
+    TokenConfig testConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("429-json-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(Duration.ofSeconds(10))
+        .clock(testClock)
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager manager = new OAuth2TokenManager(testConfig);
+
+    try {
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(200)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {
+                  "access_token": "good-token",
+                  "token_type": "Bearer",
+                  "expires_in": 60
+              }
+              """));
+
+      manager.getToken();
+
+      // Advance past expiry so fallback is not possible
+      testClock.advance(Duration.ofSeconds(61));
+
+      // Server returns 429 with a JSON OAuth2 error body — status code must win
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(429)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .addHeader("Retry-After", "120")
+          .setBody("""
+              {
+                  "error": "temporarily_unavailable",
+                  "error_description": "Too many requests"
+              }
+              """));
+
+      assertThatThrownBy(manager::getToken)
+          .isInstanceOf(RateLimitedException.class)
+          .satisfies(ex -> {
+            RateLimitedException rle = (RateLimitedException) ex;
+            assertThat(rle.getRetryAfter()).isEqualTo(Duration.ofSeconds(120));
+          });
+    } finally {
+      manager.close();
+    }
+  }
+
+  @Test
+  void shouldNotTripCircuitBreakerOnRepeatedCredentialFailures() throws Exception {
+    TokenConfig testConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("cb-creds-" + UUID.randomUUID())
+        .clientSecret("wrong-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager manager = new OAuth2TokenManager(testConfig);
+
+    try {
+      // Send 5 consecutive 401s — more than enough to trip CB if credentials were recorded
+      for (int i = 0; i < 5; i++) {
+        mockWebServer.enqueue(new MockResponse()
+            .setResponseCode(401)
+            .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+            .setBody("""
+                {
+                    "error": "invalid_client",
+                    "error_description": "Bad credentials"
+                }
+                """));
+
+        assertThatThrownBy(manager::getToken)
+            .isInstanceOf(InvalidCredentialsException.class)
+            .hasMessage("Bad credentials");
+      }
+
+      // If CB had opened, this would throw ServiceUnavailableException("CB open").
+      // Instead it should still surface the real credential error.
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(401)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {
+                  "error": "invalid_client",
+                  "error_description": "Bad credentials"
+              }
+              """));
+
+      assertThatThrownBy(manager::getToken)
+          .isInstanceOf(InvalidCredentialsException.class)
+          .hasMessage("Bad credentials");
     } finally {
       manager.close();
     }

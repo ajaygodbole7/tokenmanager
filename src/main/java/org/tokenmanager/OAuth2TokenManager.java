@@ -407,6 +407,13 @@ public class OAuth2TokenManager implements AutoCloseable {
 
 
   private void handleErrorResponse(Response response) throws IOException {
+    // 429 classification is status-code authoritative — the response body
+    // is irrelevant. This guarantees RateLimitedException regardless of
+    // whether the server sends a JSON OAuth2 error or plain text.
+    if (response.code() == 429) {
+      throw buildRateLimitedException(response);
+    }
+
     String errorBody = readErrorBodySafely(response);
     JsonNode errorNode = tryParseErrorBody(errorBody);
     if (errorNode != null && errorNode.has("error")) {
@@ -463,16 +470,38 @@ public class OAuth2TokenManager implements AutoCloseable {
   private void fallbackToHttpStatusHandling(Response response, String errorBody) {
     if (response.code() == 401 || response.code() == 403) {
       throw new InvalidCredentialsException("Authentication failed");
-    } else if (response.code() == 429) {
-      String retryAfter = response.header("Retry-After");
-      String msg = retryAfter != null
-          ? "Rate limited by server. Retry after " + retryAfter + " seconds"
-          : "Rate limited by server";
-      throw new RateLimitedException(msg);
     } else if (response.code() >= 500) {
       throw new ServiceUnavailableException("Server error: " + response.code());
     } else {
       throw new InvalidEndpointException("Invalid request: " + response.code());
+    }
+  }
+
+  /**
+   * Builds a RateLimitedException from a 429 response, parsing the Retry-After
+   * header into a Duration when present.
+   */
+  private RateLimitedException buildRateLimitedException(Response response) {
+    String retryAfterHeader = response.header("Retry-After");
+    Duration retryAfter = parseRetryAfter(retryAfterHeader);
+    String msg = retryAfter != null
+        ? "Rate limited by server. Retry after " + retryAfter.getSeconds() + " seconds"
+        : "Rate limited by server";
+    return new RateLimitedException(msg, retryAfter);
+  }
+
+  /**
+   * Parses a Retry-After header value (seconds) into a Duration.
+   * Returns null if the header is absent or not a valid integer.
+   */
+  private Duration parseRetryAfter(String retryAfterHeader) {
+    if (retryAfterHeader == null) {
+      return null;
+    }
+    try {
+      return Duration.ofSeconds(Long.parseLong(retryAfterHeader.trim()));
+    } catch (NumberFormatException e) {
+      return null;
     }
   }
 
@@ -565,6 +594,7 @@ public class OAuth2TokenManager implements AutoCloseable {
             .minimumNumberOfCalls(MINIMUM_CALLS)
             .waitDurationInOpenState(WAIT_DURATION)
             .permittedNumberOfCallsInHalfOpenState(HALF_OPEN_CALLS)
+            .recordException(e -> e instanceof ServiceUnavailableException)
             .ignoreExceptions(RateLimitedException.class)
             .build();
 
