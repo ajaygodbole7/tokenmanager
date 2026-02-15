@@ -41,6 +41,11 @@ public class TokenConfig {
 
   @NonNull @Default ClientAuthMethod clientAuthMethod = ClientAuthMethod.CLIENT_SECRET_POST;
 
+  @Default int maxRetryAttempts = 3;
+  @NonNull @Default Duration initialRetryDelay = Duration.ofSeconds(1);
+  @Default int circuitBreakerMinimumCalls = 3;
+  @NonNull @Default Duration circuitBreakerWaitDuration = Duration.ofSeconds(60);
+
   // Fields for other grant types
   String username; // For password grant
   String password;
@@ -59,6 +64,18 @@ public class TokenConfig {
     }
     if (httpTimeout.isNegative() || httpTimeout.isZero()) {
       throw new IllegalArgumentException("httpTimeout must be positive");
+    }
+    if (maxRetryAttempts < 1) {
+      throw new IllegalArgumentException("maxRetryAttempts must be >= 1");
+    }
+    if (initialRetryDelay.isNegative() || initialRetryDelay.isZero()) {
+      throw new IllegalArgumentException("initialRetryDelay must be positive");
+    }
+    if (circuitBreakerMinimumCalls < 1) {
+      throw new IllegalArgumentException("circuitBreakerMinimumCalls must be >= 1");
+    }
+    if (circuitBreakerWaitDuration.isNegative() || circuitBreakerWaitDuration.isZero()) {
+      throw new IllegalArgumentException("circuitBreakerWaitDuration must be positive");
     }
     URI uri = URI.create(tokenEndpoint);
     if (!"https".equalsIgnoreCase(uri.getScheme())) {

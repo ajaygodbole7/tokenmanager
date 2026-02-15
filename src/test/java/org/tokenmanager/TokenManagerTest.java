@@ -2079,6 +2079,166 @@ class TokenManagerTest {
     }
   }
 
+  // --- Custom retry and circuit breaker config tests ---
+
+  @Test
+  void shouldUseCustomRetryAttempts() throws Exception {
+    // With maxRetryAttempts(2): 1 disconnect + 1 success = works
+    TokenConfig twoRetryConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("retry-2-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(REFRESH_THRESHOLD)
+        .maxRetryAttempts(2)
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager twoRetryManager = new OAuth2TokenManager(twoRetryConfig);
+
+    try {
+      mockWebServer.enqueue(new MockResponse()
+          .setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST));
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(200)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {
+                  "access_token": "retry-token",
+                  "token_type": "Bearer",
+                  "expires_in": 3600
+              }
+              """));
+
+      String token = twoRetryManager.getToken();
+      assertThat(token).isEqualTo("retry-token");
+      assertThat(mockWebServer.getRequestCount()).isEqualTo(2);
+    } finally {
+      twoRetryManager.close();
+    }
+
+    // With maxRetryAttempts(1): 1 disconnect = failure (no retry beyond first attempt)
+    TokenConfig oneRetryConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("retry-1-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(REFRESH_THRESHOLD)
+        .maxRetryAttempts(1)
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager oneRetryManager = new OAuth2TokenManager(oneRetryConfig);
+
+    try {
+      mockWebServer.enqueue(new MockResponse()
+          .setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST));
+
+      assertThatThrownBy(oneRetryManager::getToken)
+          .isInstanceOf(ServiceUnavailableException.class);
+    } finally {
+      oneRetryManager.close();
+    }
+  }
+
+  @Test
+  void shouldUseCustomCircuitBreakerConfig() throws Exception {
+    TokenConfig cbConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("cb-custom-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(REFRESH_THRESHOLD)
+        .circuitBreakerMinimumCalls(2)
+        .circuitBreakerWaitDuration(Duration.ofSeconds(5))
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager cbManager = new OAuth2TokenManager(cbConfig);
+
+    try {
+      // Enqueue 2 failures — enough to open CB with minimumCalls=2
+      for (int i = 0; i < 2; i++) {
+        mockWebServer.enqueue(new MockResponse()
+            .setResponseCode(500)
+            .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+            .setBody("""
+                {
+                    "error": "server_error",
+                    "error_description": "Internal server error"
+                }
+                """));
+      }
+
+      // Trigger 2 failures to open the circuit breaker
+      for (int i = 0; i < 2; i++) {
+        assertThatThrownBy(cbManager::getToken)
+            .isInstanceOf(ServiceUnavailableException.class);
+      }
+
+      // Circuit should now be open — fast-fail without hitting server
+      int requestCountAfterOpen = mockWebServer.getRequestCount();
+      assertThatThrownBy(cbManager::getToken)
+          .isInstanceOf(ServiceUnavailableException.class)
+          .hasMessageContaining("Service unavailable");
+      assertThat(mockWebServer.getRequestCount()).isEqualTo(requestCountAfterOpen);
+    } finally {
+      cbManager.close();
+    }
+  }
+
+  @Test
+  void shouldRejectZeroMaxRetryAttempts() {
+    assertThatThrownBy(() -> TokenConfig.builder()
+        .tokenEndpoint("https://auth.example.com/oauth/token")
+        .clientId("client")
+        .clientSecret("secret")
+        .maxRetryAttempts(0)
+        .build()
+        .validate())
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("maxRetryAttempts must be >= 1");
+  }
+
+  @Test
+  void shouldRejectZeroInitialRetryDelay() {
+    assertThatThrownBy(() -> TokenConfig.builder()
+        .tokenEndpoint("https://auth.example.com/oauth/token")
+        .clientId("client")
+        .clientSecret("secret")
+        .initialRetryDelay(Duration.ZERO)
+        .build()
+        .validate())
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("initialRetryDelay must be positive");
+  }
+
+  @Test
+  void shouldRejectZeroCircuitBreakerMinimumCalls() {
+    assertThatThrownBy(() -> TokenConfig.builder()
+        .tokenEndpoint("https://auth.example.com/oauth/token")
+        .clientId("client")
+        .clientSecret("secret")
+        .circuitBreakerMinimumCalls(0)
+        .build()
+        .validate())
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("circuitBreakerMinimumCalls must be >= 1");
+  }
+
+  @Test
+  void shouldRejectZeroCircuitBreakerWaitDuration() {
+    assertThatThrownBy(() -> TokenConfig.builder()
+        .tokenEndpoint("https://auth.example.com/oauth/token")
+        .clientId("client")
+        .clientSecret("secret")
+        .circuitBreakerWaitDuration(Duration.ZERO)
+        .build()
+        .validate())
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("circuitBreakerWaitDuration must be positive");
+  }
+
   // --- Retry jitter tests ---
 
   @Test

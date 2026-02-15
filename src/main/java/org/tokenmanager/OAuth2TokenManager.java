@@ -63,11 +63,7 @@ public class OAuth2TokenManager implements AutoCloseable {
   // Default configurations and constants
   private static final Duration DEFAULT_HTTP_TIMEOUT = Duration.ofSeconds(10);
   private static final Duration DEFAULT_REFRESH_THRESHOLD = Duration.ofSeconds(30);
-  private static final int MAX_RETRY_ATTEMPTS = 3;
-  private static final Duration INITIAL_RETRY_DELAY = Duration.ofSeconds(1);
   private static final int FAILURE_THRESHOLD = 100;
-  private static final int MINIMUM_CALLS = 3;
-  private static final Duration WAIT_DURATION = Duration.ofSeconds(60);
   private static final int HALF_OPEN_CALLS = 1;
 
   private final TokenConfig config;
@@ -614,8 +610,8 @@ public class OAuth2TokenManager implements AutoCloseable {
     var cbConfig =
         CircuitBreakerConfig.custom()
             .failureRateThreshold(FAILURE_THRESHOLD)
-            .minimumNumberOfCalls(MINIMUM_CALLS)
-            .waitDurationInOpenState(WAIT_DURATION)
+            .minimumNumberOfCalls(config.getCircuitBreakerMinimumCalls())
+            .waitDurationInOpenState(config.getCircuitBreakerWaitDuration())
             .permittedNumberOfCallsInHalfOpenState(HALF_OPEN_CALLS)
             .recordException(e -> e instanceof ServiceUnavailableException
                 || e instanceof UncheckedIOException)
@@ -637,11 +633,11 @@ public class OAuth2TokenManager implements AutoCloseable {
   private Retry createRetry() {
     IntervalFunction intervalFunction =
         IntervalFunction.ofExponentialRandomBackoff(
-            INITIAL_RETRY_DELAY.toMillis(), 2.0, 0.5);
+            config.getInitialRetryDelay().toMillis(), 2.0, 0.5);
 
     var retryConfig =
         RetryConfig.<OAuth2Token>custom()
-            .maxAttempts(MAX_RETRY_ATTEMPTS)
+            .maxAttempts(config.getMaxRetryAttempts())
             .intervalFunction(intervalFunction)
             .retryOnException(e -> e instanceof UncheckedIOException)
             .build();
@@ -673,7 +669,7 @@ public class OAuth2TokenManager implements AutoCloseable {
                       + "Token refresh suspended for %d seconds after reaching %d%% failure rate. "
                       + "Last token expires at: %s",
                   config.getClientId(),
-                  WAIT_DURATION.toSeconds(),
+                  config.getCircuitBreakerWaitDuration().toSeconds(),
                   FAILURE_THRESHOLD,
                   currentToken.expiresAt());
           case HALF_OPEN ->
