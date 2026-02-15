@@ -1,7 +1,7 @@
 package org.tokenmanager;
 
-import java.util.Arrays;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 
 public enum OAuth2TokenType {
@@ -13,7 +13,7 @@ public enum OAuth2TokenType {
 
   static {
     for (OAuth2TokenType type : values()) {
-      TOKEN_TYPE_MAP.put(type.value, type);
+      TOKEN_TYPE_MAP.put(type.value.toLowerCase(Locale.ROOT), type);
     }
   }
 
@@ -25,15 +25,10 @@ public enum OAuth2TokenType {
 
   public static OAuth2TokenType fromString(String value) {
     if (value == null) {
-      return BEARER; // default to BEARER if not specified
+      return BEARER;
     }
-    OAuth2TokenType type = TOKEN_TYPE_MAP.get(value);
-    if (type == null) {
-      throw new IllegalArgumentException(
-          String.format(
-              "Unknown token type: %s. Valid values are: %s", value, Arrays.toString(values())));
-    }
-    return type;
+    OAuth2TokenType type = TOKEN_TYPE_MAP.get(value.toLowerCase(Locale.ROOT));
+    return type != null ? type : BEARER;
   }
 
   @Override

@@ -138,6 +138,37 @@ class TokenManagerTest {
   }
 
   @Test
+  void shouldAcceptTokenTypeCaseInsensitively() throws Exception {
+    // Providers may return "bearer", "BEARER", or "Bearer" — all must work.
+    // Unknown types default to Bearer rather than throwing IllegalArgumentException.
+    String[] variants = {"bearer", "BEARER", "Bearer", "unknown_type"};
+
+    for (String variant : variants) {
+      String uniqueClientId = "token-type-" + UUID.randomUUID();
+      TokenConfig config = TokenConfig.builder()
+          .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+          .clientId(uniqueClientId)
+          .clientSecret("test-secret")
+          .httpTimeout(HTTP_TIMEOUT)
+          .refreshThreshold(REFRESH_THRESHOLD)
+          .httpClient(httpClient)
+          .build();
+
+      try (OAuth2TokenManager manager = new OAuth2TokenManager(config)) {
+        mockWebServer.enqueue(new MockResponse()
+            .setResponseCode(200)
+            .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+            .setBody("""
+                {"access_token": "token-%s", "token_type": "%s", "expires_in": 3600}
+                """.formatted(variant, variant)));
+
+        String token = manager.getToken();
+        assertThat(token).isEqualTo("token-" + variant);
+      }
+    }
+  }
+
+  @Test
   void shouldHandleInvalidCredentials() throws Exception {
     // Arrange
     mockWebServer.enqueue(new MockResponse()
