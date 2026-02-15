@@ -194,14 +194,15 @@ TokenConfig config = TokenConfig.builder()
 
 ## Error handling
 
-`getToken()` throws `TokenException`. Four sealed subclasses cover every failure mode:
+`getToken()` throws `TokenException`. Five sealed subclasses cover every failure mode:
 
 | Exception | Meaning | Trigger |
 |---|---|---|
 | `InvalidCredentialsException` | Bad credentials | 401, 403, `invalid_client`, `invalid_grant` |
 | `InvalidConfigurationException` | Bad config | `invalid_request`, `invalid_scope`, `unsupported_grant_type` |
 | `InvalidEndpointException` | Unreachable endpoint | DNS failure, non-auth 4xx |
-| `ServiceUnavailableException` | Transient failure | 5xx, timeout, circuit breaker open, 429 |
+| `RateLimitedException` | Rate limited | 429 |
+| `ServiceUnavailableException` | Transient failure | 5xx, timeout, circuit breaker open |
 
 ```java
 try {
@@ -212,6 +213,7 @@ try {
         case InvalidCredentialsException ex -> alertOps(ex);
         case InvalidConfigurationException ex -> failFast(ex);
         case InvalidEndpointException ex -> checkDns(ex);
+        case RateLimitedException ex -> backOff(ex);
         case ServiceUnavailableException ex -> retryLater(ex);
     }
 }

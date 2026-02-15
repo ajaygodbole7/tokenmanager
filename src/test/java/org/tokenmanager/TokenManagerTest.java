@@ -1136,13 +1136,76 @@ class TokenManagerTest {
           .addHeader("Retry-After", "60"));
 
       // Should throw because token is expired — no fallback possible
-      // Outer exception is "Service is unavailable", inner cause has the 429 details
       assertThatThrownBy(manager::getToken)
-          .isInstanceOf(ServiceUnavailableException.class)
-          .hasMessage("Service is unavailable")
-          .hasCauseExactlyInstanceOf(ServiceUnavailableException.class)
-          .getCause()
+          .isInstanceOf(RateLimitedException.class)
           .hasMessageContaining("Rate limited");
+    } finally {
+      manager.close();
+    }
+  }
+
+  @Test
+  void shouldNotTripCircuitBreakerOnRepeated429s() throws Exception {
+    MutableClock testClock = new MutableClock(Instant.now());
+
+    TokenConfig testConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("429-cb-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(Duration.ofSeconds(10))
+        .clock(testClock)
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager manager = new OAuth2TokenManager(testConfig);
+
+    try {
+      // Get initial token with long expiry
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(200)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {
+                  "access_token": "good-token",
+                  "token_type": "Bearer",
+                  "expires_in": 300
+              }
+              """));
+
+      manager.getToken();
+
+      // Advance into refresh threshold (token expires at t=300, threshold=10s)
+      testClock.advance(Duration.ofSeconds(291));
+
+      // Send 5 consecutive 429s — more than enough to trip the CB (minimum calls = 3)
+      // Each should fall back to the cached token, and CB should stay closed
+      for (int i = 0; i < 5; i++) {
+        mockWebServer.enqueue(new MockResponse()
+            .setResponseCode(429)
+            .addHeader("Retry-After", "30"));
+
+        String token = manager.getToken();
+        assertThat(token).isEqualTo("good-token");
+      }
+
+      // Now serve a successful refresh — if CB had tripped, this would fail
+      // Advance clock a bit more so the previous cached check doesn't short-circuit
+      testClock.advance(Duration.ofSeconds(5));
+
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(200)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {
+                  "access_token": "refreshed-token",
+                  "token_type": "Bearer",
+                  "expires_in": 300
+              }
+              """));
+
+      String refreshed = manager.getToken();
+      assertThat(refreshed).isEqualTo("refreshed-token");
     } finally {
       manager.close();
     }

@@ -2,7 +2,8 @@ package org.tokenmanager;
 
 public sealed class TokenException extends RuntimeException
     permits InvalidCredentialsException, InvalidConfigurationException,
-            InvalidEndpointException, ServiceUnavailableException {
+            InvalidEndpointException, RateLimitedException,
+            ServiceUnavailableException {
 
   public TokenException(String message) {
     super(message);

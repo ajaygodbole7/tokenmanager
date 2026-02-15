@@ -176,7 +176,7 @@ public class OAuth2TokenManager implements AutoCloseable {
       // are not masked until the cached token happens to expire.
       // Snapshot the volatile field once to avoid inconsistent reads across threads.
       OAuth2Token cached = currentToken;
-      if (e instanceof ServiceUnavailableException
+      if ((e instanceof ServiceUnavailableException || e instanceof RateLimitedException)
           && clock.instant().isBefore(cached.expiresAt())) {
         log.warn("Transient refresh failure for client {}. Returning current token (expires at {}): {}",
             config.getClientId(), cached.expiresAt(), e.getMessage());
@@ -468,7 +468,7 @@ public class OAuth2TokenManager implements AutoCloseable {
       String msg = retryAfter != null
           ? "Rate limited by server. Retry after " + retryAfter + " seconds"
           : "Rate limited by server";
-      throw new ServiceUnavailableException(msg);
+      throw new RateLimitedException(msg);
     } else if (response.code() >= 500) {
       throw new ServiceUnavailableException("Server error: " + response.code());
     } else {
@@ -565,6 +565,7 @@ public class OAuth2TokenManager implements AutoCloseable {
             .minimumNumberOfCalls(MINIMUM_CALLS)
             .waitDurationInOpenState(WAIT_DURATION)
             .permittedNumberOfCallsInHalfOpenState(HALF_OPEN_CALLS)
+            .ignoreExceptions(RateLimitedException.class)
             .build();
 
     CircuitBreakerRegistry registry = CircuitBreakerRegistry.of(cbConfig);
