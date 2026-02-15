@@ -225,8 +225,8 @@ try {
   - `getToken()` is a blocking call. Tokens are cached in-memory per `OAuth2TokenManager` instance (not shared across JVMs)
   - At most one in-flight refresh per manager instance at a time; concurrent callers share it. No thread storms, no duplicate fetches
   - If a transient refresh failure occurs (5xx, timeout, 429, circuit breaker open) and the cached token is still valid, `getToken()` returns the cached token. Permanent failures (invalid credentials, bad configuration, unreachable endpoint) throw immediately — they are never masked by a cached token
-  - Circuit breaker opens after consecutive failures, 60s cooldown
-  - Retry with exponential backoff and ±50% jitter, 3 attempts
+  - Circuit breaker opens after consecutive network failures, 60s cooldown. Server errors (5xx) and credential/config errors do not trip it
+  - Retry with exponential backoff and ±50% jitter, 3 attempts. Retries cover network-level failures only (connection resets, socket timeouts). Server errors (5xx), auth errors, and rate limits are not retried — the circuit breaker and graceful degradation handle those
   - Rate-limited (429) responses do not trip the circuit breaker and are not retried. If the cached token is still valid, `getToken()` returns it
 
 ## Security
