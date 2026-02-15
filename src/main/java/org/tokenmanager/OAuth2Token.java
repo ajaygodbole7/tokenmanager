@@ -73,12 +73,22 @@ public record OAuth2Token(
   }
 
   /**
-   * Gets time until token expiry
+   * Gets time until token expiry using the given clock
+   *
+   * @param clock the clock to use for current time
+   * @return Duration until token expires
+   */
+  public Duration timeUntilExpiry(Clock clock) {
+    return Duration.between(clock.instant(), expiresAt);
+  }
+
+  /**
+   * Gets time until token expiry using the system clock
    *
    * @return Duration until token expires
    */
   public Duration timeUntilExpiry() {
-    return Duration.between(Instant.now(), expiresAt);
+    return timeUntilExpiry(Clock.systemUTC());
   }
 
   /**
