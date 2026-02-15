@@ -583,10 +583,7 @@ class TokenManagerTest {
             """));
 
     assertThatThrownBy(() -> tokenManager.getToken())
-        .isInstanceOf(ServiceUnavailableException.class)
-        .hasMessage("Service is unavailable")
-        .hasCauseExactlyInstanceOf(InvalidConfigurationException.class)
-        .getCause()
+        .isInstanceOf(InvalidConfigurationException.class)
         .hasMessage("Requested scope is invalid");
 
     // Test unsupported_grant_type error
@@ -601,10 +598,7 @@ class TokenManagerTest {
             """));
 
     assertThatThrownBy(() -> tokenManager.getToken())
-        .isInstanceOf(ServiceUnavailableException.class)
-        .hasMessage("Service is unavailable")
-        .hasCauseExactlyInstanceOf(InvalidConfigurationException.class)
-        .getCause()
+        .isInstanceOf(InvalidConfigurationException.class)
         .hasMessage("Grant type not supported");
 
     // Test invalid_request error
@@ -619,10 +613,7 @@ class TokenManagerTest {
             """));
 
     assertThatThrownBy(() -> tokenManager.getToken())
-        .isInstanceOf(ServiceUnavailableException.class)
-        .hasMessage("Service is unavailable")
-        .hasCauseExactlyInstanceOf(InvalidConfigurationException.class)
-        .getCause()
+        .isInstanceOf(InvalidConfigurationException.class)
         .hasMessage("Request was malformed");
   }
 
@@ -1325,6 +1316,98 @@ class TokenManagerTest {
       // expires would delay detection of a credential rotation failure.
       assertThatThrownBy(manager::getToken)
           .isInstanceOf(InvalidCredentialsException.class);
+    } finally {
+      manager.close();
+    }
+  }
+
+  @Test
+  void shouldNotFallbackOnInvalidConfiguration() throws Exception {
+    MutableClock testClock = new MutableClock(Instant.now());
+
+    TokenConfig testConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("config-fail-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(Duration.ofSeconds(10))
+        .clock(testClock)
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager manager = new OAuth2TokenManager(testConfig);
+
+    try {
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(200)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {
+                  "access_token": "good-token",
+                  "token_type": "Bearer",
+                  "expires_in": 60
+              }
+              """));
+
+      manager.getToken();
+      testClock.advance(Duration.ofSeconds(51));
+
+      // Server responds with invalid_scope — configuration error
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(400)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {
+                  "error": "invalid_scope",
+                  "error_description": "Requested scope is invalid"
+              }
+              """));
+
+      assertThatThrownBy(manager::getToken)
+          .isInstanceOf(InvalidConfigurationException.class);
+    } finally {
+      manager.close();
+    }
+  }
+
+  @Test
+  void shouldNotFallbackOnInvalidEndpoint() throws Exception {
+    MutableClock testClock = new MutableClock(Instant.now());
+
+    TokenConfig testConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("endpoint-fail-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(Duration.ofSeconds(10))
+        .clock(testClock)
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager manager = new OAuth2TokenManager(testConfig);
+
+    try {
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(200)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {
+                  "access_token": "good-token",
+                  "token_type": "Bearer",
+                  "expires_in": 60
+              }
+              """));
+
+      manager.getToken();
+      testClock.advance(Duration.ofSeconds(51));
+
+      // Server responds with 404 — wrong endpoint
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(404)
+          .setBody("Not Found"));
+
+      assertThatThrownBy(manager::getToken)
+          .isInstanceOf(InvalidEndpointException.class);
     } finally {
       manager.close();
     }

@@ -174,11 +174,13 @@ public class OAuth2TokenManager implements AutoCloseable {
       // Graceful degradation for transient failures only. Permanent failures
       // (credentials, configuration, endpoint) are rethrown immediately so they
       // are not masked until the cached token happens to expire.
+      // Snapshot the volatile field once to avoid inconsistent reads across threads.
+      OAuth2Token cached = currentToken;
       if (e instanceof ServiceUnavailableException
-          && clock.instant().isBefore(currentToken.expiresAt())) {
+          && clock.instant().isBefore(cached.expiresAt())) {
         log.warn("Transient refresh failure for client {}. Returning current token (expires at {}): {}",
-            config.getClientId(), currentToken.expiresAt(), e.getMessage());
-        return currentToken.tokenValue();
+            config.getClientId(), cached.expiresAt(), e.getMessage());
+        return cached.tokenValue();
       }
       throw e;
     }
@@ -214,10 +216,11 @@ public class OAuth2TokenManager implements AutoCloseable {
       return newToken.tokenValue();
     } catch (ExecutionException e) {
       Throwable cause = e.getCause();
-      if (isCredentialsError(cause)) {
-        throw new InvalidCredentialsException("Invalid client credentials", cause);
-      } else if (isEndpointError(cause)) {
-        throw new InvalidEndpointException("Invalid OAuth2 endpoint", cause);
+      // Preserve the original exception type for non-transient failures so
+      // the graceful degradation guard can distinguish permanent from transient.
+      if (cause instanceof TokenException te
+          && !(cause instanceof ServiceUnavailableException)) {
+        throw te;
       }
       throw new ServiceUnavailableException("Service is unavailable", cause);
     } catch (TimeoutException e) {
@@ -661,29 +664,6 @@ public class OAuth2TokenManager implements AutoCloseable {
     } catch (Exception ignored) {
       log.debug("Could not retrieve circuit breaker metrics for client {}", config.getClientId());
     }
-  }
-
-  /**
-   * Checks if the given error indicates a credential problem.
-   *
-   * @param error The throwable to check
-   * @return true if error is credential-related, false otherwise.
-   */
-  private boolean isCredentialsError(Throwable error) {
-    return error instanceof InvalidCredentialsException ||
-        (error.getMessage() != null && (error.getMessage().contains("401") || error.getMessage().contains("403")));
-  }
-
-  /**
-   * Checks if the given error indicates an endpoint (network or configuration) problem.
-   *
-   * @param error The throwable to check
-   * @return true if error is endpoint-related, false otherwise.
-   */
-  private boolean isEndpointError(Throwable error) {
-    return error instanceof InvalidEndpointException ||
-        (error.getMessage() != null && (error.getMessage().contains("UnknownHostException") ||
-            error.getMessage().contains("Connection refused")));
   }
 
   /**
