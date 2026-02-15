@@ -4,8 +4,10 @@ import java.util.Collections;
 import java.util.UUID;
 
 import okhttp3.OkHttpClient;
+import okhttp3.mockwebserver.Dispatcher;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
+import okhttp3.mockwebserver.RecordedRequest;
 import okhttp3.tls.HandshakeCertificates;
 import okhttp3.tls.HeldCertificate;
 import org.junit.jupiter.api.AfterEach;
@@ -174,11 +176,11 @@ class TokenManagerConcurrencyTest {
                 {
                     "access_token": "%s",
                     "token_type": "Bearer",
-                    "expires_in": 0
+                    "expires_in": 1
                 }
                 """, EXPIRED_TOKEN)));
 
-    tokenManager.getToken(); // Get initial expired token
+    tokenManager.getToken(); // Get initial token (expired by threshold)
 
     mockWebServer.enqueue(new MockResponse()
                               .setResponseCode(200)
@@ -240,29 +242,34 @@ class TokenManagerConcurrencyTest {
    */
   @Test
   void shouldHandleShutdownWithPendingRequests() throws Exception {
-    // Given
-    mockWebServer.enqueue(new MockResponse()
-                              .setResponseCode(200)
-                              .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
-                              .setBodyDelay(2, TimeUnit.SECONDS) // Simulate slow response
-                              .setBody(String.format("""
+    // Given — use a Dispatcher that signals when the request arrives
+    CountDownLatch serverReceivedRequest = new CountDownLatch(1);
+    mockWebServer.setDispatcher(new Dispatcher() {
+      @Override
+      public MockResponse dispatch(RecordedRequest request) {
+        serverReceivedRequest.countDown();
+        try { Thread.sleep(2000); } catch (InterruptedException ignored) { }
+        return new MockResponse()
+            .setResponseCode(200)
+            .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+            .setBody(String.format("""
                 {
                     "access_token": "%s",
                     "token_type": "Bearer",
                     "expires_in": 3600
                 }
-                """, EXPECTED_TOKEN)));
+                """, EXPECTED_TOKEN));
+      }
+    });
 
     int threadCount = 5;
     List<Exception> exceptions = Collections.synchronizedList(new ArrayList<>());
     ExecutorService executor = Executors.newFixedThreadPool(threadCount);
-    CountDownLatch requestStartedLatch = new CountDownLatch(threadCount);
 
     // When
     for (int i = 0; i < threadCount; i++) {
       executor.submit(() -> {
         try {
-          requestStartedLatch.countDown();
           tokenManager.getToken();
         } catch (Exception e) {
           exceptions.add(e);
@@ -270,12 +277,11 @@ class TokenManagerConcurrencyTest {
       });
     }
 
-    // Wait for requests to start
-    boolean requestsStarted = requestStartedLatch.await(5, TimeUnit.SECONDS);
-    assertThat(requestsStarted).as("All requests should start").isTrue();
+    // Wait for the server to actually receive the request
+    boolean requestArrived = serverReceivedRequest.await(5, TimeUnit.SECONDS);
+    assertThat(requestArrived).as("Server should receive the request").isTrue();
 
-    // Shutdown token manager while requests are in progress
-    Thread.sleep(100); // Brief delay to ensure requests are processing
+    // Shutdown token manager while request is in-flight
     tokenManager.close();
 
     // Then
@@ -299,7 +305,7 @@ class TokenManagerConcurrencyTest {
    */
   @Test
   void shouldQueueRequestsDuringRefresh() throws Exception {
-    // Given - Set up an expired token
+    // Given - Set up a token expired by threshold (1s < 30s)
     mockWebServer.enqueue(new MockResponse()
                               .setResponseCode(200)
                               .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
@@ -307,11 +313,11 @@ class TokenManagerConcurrencyTest {
             {
                 "access_token": "expired-token",
                 "token_type": "Bearer",
-                "expires_in": 0
+                "expires_in": 1
             }
             """));
 
-    // Get the initial expired token
+    // Get the initial token (expired by threshold)
     tokenManager.getToken();
 
     // Set up a slow refresh response
@@ -467,7 +473,21 @@ class TokenManagerConcurrencyTest {
    */
   @Test
   void shouldHandleMixedRefreshResults() throws Exception {
-    // Given - Set up initial valid token
+    // MutableClock prevents graceful degradation from masking the 500 error
+    MutableClock testClock = new MutableClock(Instant.now());
+
+    TokenConfig mixedConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("mixed-refresh-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(REFRESH_THRESHOLD)
+        .clock(testClock)
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager mixedManager = new OAuth2TokenManager(mixedConfig);
+
     mockWebServer.enqueue(new MockResponse()
                               .setResponseCode(200)
                               .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
@@ -475,7 +495,7 @@ class TokenManagerConcurrencyTest {
             {
                 "access_token": "%s",
                 "token_type": "Bearer",
-                "expires_in": 0
+                "expires_in": 1
             }
             """, EXPIRED_TOKEN)));
 
@@ -502,8 +522,9 @@ class TokenManagerConcurrencyTest {
             }
             """, REFRESHED_TOKEN)));
 
-    // Get initial expired token
-    tokenManager.getToken();
+    // Get initial token, then advance clock past expiry
+    mixedManager.getToken();
+    testClock.advance(Duration.ofSeconds(2));
 
     // When - First wave of threads (will encounter error)
     int threadCount = 5;
@@ -517,7 +538,7 @@ class TokenManagerConcurrencyTest {
     for (int i = 0; i < threadCount; i++) {
       executor.submit(() -> {
         try {
-          tokenManager.getToken();
+          mixedManager.getToken();
         } catch (Exception e) {
           exceptions.add(e);
         } finally {
@@ -529,16 +550,13 @@ class TokenManagerConcurrencyTest {
     // Wait for first wave to complete
     firstWaveComplete.await(5, TimeUnit.SECONDS);
 
-    // Second wave of threads (should succeed after retry)
+    // Second wave of threads (should succeed)
     CountDownLatch secondWaveComplete = new CountDownLatch(threadCount);
-
-    // Brief delay to allow retry mechanism to reset
-    Thread.sleep(100);
 
     for (int i = 0; i < threadCount; i++) {
       executor.submit(() -> {
         try {
-          String token = tokenManager.getToken();
+          String token = mixedManager.getToken();
           uniqueTokens.add(token);
         } catch (Exception e) {
           exceptions.add(e);
@@ -574,15 +592,31 @@ class TokenManagerConcurrencyTest {
     assertThat(executor.awaitTermination(5, TimeUnit.SECONDS))
         .as("Executor should terminate gracefully")
         .isTrue();
+    mixedManager.close();
   }
 
   /**
    * Tests that when TokenManager is shut down during a refresh operation,
-      * waiting threads receive appropriate exceptions and resources are cleaned up.
-      */
+   * waiting threads receive appropriate exceptions and resources are cleaned up.
+   * MutableClock advances past the 1s token expiry to prevent graceful degradation.
+   */
   @Test
   void shouldHandleShutdownDuringRefresh() throws Exception {
-    // Given - Set up an expired token
+    MutableClock testClock = new MutableClock(Instant.now());
+
+    TokenConfig shutdownConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("shutdown-refresh-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(REFRESH_THRESHOLD)
+        .clock(testClock)
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager shutdownManager = new OAuth2TokenManager(shutdownConfig);
+
+    // Given - Set up a token expired by threshold
     mockWebServer.enqueue(new MockResponse()
                               .setResponseCode(200)
                               .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
@@ -590,42 +624,52 @@ class TokenManagerConcurrencyTest {
             {
                 "access_token": "expired-token",
                 "token_type": "Bearer",
-                "expires_in": 0
+                "expires_in": 1
             }
             """));
 
-    tokenManager.getToken(); // Get expired token
+    shutdownManager.getToken();
+    testClock.advance(Duration.ofSeconds(2));
 
-    // Set up a slow refresh response
-    mockWebServer.enqueue(new MockResponse()
-                              .setResponseCode(200)
-                              .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
-                              .setBodyDelay(2, TimeUnit.SECONDS) // Slow response to ensure we can shutdown during refresh
-                              .setBody("""
-            {
-                "access_token": "new-token",
-                "token_type": "Bearer",
-                "expires_in": 3600
-            }
-            """));
+    // Set up a slow refresh response via Dispatcher that signals arrival
+    CountDownLatch serverReceivedRefresh = new CountDownLatch(1);
+    mockWebServer.setDispatcher(new Dispatcher() {
+      @Override
+      public MockResponse dispatch(RecordedRequest request) {
+        serverReceivedRefresh.countDown();
+        try { Thread.sleep(2000); } catch (InterruptedException ignored) { }
+        return new MockResponse()
+            .setResponseCode(200)
+            .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+            .setBody("""
+                {
+                    "access_token": "new-token",
+                    "token_type": "Bearer",
+                    "expires_in": 3600
+                }
+                """);
+      }
+    });
 
     // When - Start a virtual thread that will get caught in refresh
     Exception[] caughtException = new Exception[1];
     Thread thread = Thread.ofVirtual().name("shutdown-test").unstarted(() -> {
       try {
-        tokenManager.getToken();
+        shutdownManager.getToken();
         fail("Should have thrown exception due to shutdown");
       } catch (Exception e) {
         caughtException[0] = e;
       }
     });
 
-    // Start thread and give it time to begin refresh
     thread.start();
-    Thread.sleep(200);
+
+    // Wait for the refresh request to actually arrive at the server
+    boolean refreshArrived = serverReceivedRefresh.await(5, TimeUnit.SECONDS);
+    assertThat(refreshArrived).as("Server should receive the refresh request").isTrue();
 
     // Then shutdown while refresh is in progress
-    tokenManager.close();
+    shutdownManager.close();
 
     // Wait for thread to complete
     thread.join(5000);
@@ -651,23 +695,31 @@ class TokenManagerConcurrencyTest {
    */
   @Test
   void shouldHandleNetworkTimeoutsDuringConcurrentAccess() throws Exception {
-    // Given - Configure token manager with short timeout
+    // OkHttp read timeout (200ms) is shorter than the server delay (1s),
+    // so each attempt fails with SocketTimeoutException. maxRetryAttempts=1
+    // prevents retries, so the failure propagates immediately.
+    OkHttpClient shortTimeoutClient = httpClient.newBuilder()
+        .retryOnConnectionFailure(false)
+        .readTimeout(Duration.ofMillis(200))
+        .build();
+
     TokenConfig shortTimeoutConfig = TokenConfig.builder()
         .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
         .clientId("timeout-test-" + UUID.randomUUID())
         .clientSecret("test-secret")
-        .httpTimeout(Duration.ofMillis(500)) // Short timeout
+        .httpTimeout(Duration.ofMillis(500))
         .refreshThreshold(REFRESH_THRESHOLD)
-        .httpClient(httpClient)
+        .maxRetryAttempts(1)
+        .httpClient(shortTimeoutClient)
         .build();
 
     OAuth2TokenManager timeoutManager = new OAuth2TokenManager(shortTimeoutConfig);
 
-    // Set up response that will timeout
+    // Set up response that will timeout (delay > OkHttp read timeout)
     mockWebServer.enqueue(new MockResponse()
                               .setResponseCode(200)
                               .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
-                              .setBodyDelay(1, TimeUnit.SECONDS) // Delay longer than timeout
+                              .setBodyDelay(1, TimeUnit.SECONDS)
                               .setBody("""
             {
                 "access_token": "test-token",
@@ -696,19 +748,15 @@ class TokenManagerConcurrencyTest {
     }
 
     // Then - Wait for all threads and verify timeouts
-    boolean completed = complete.await(5, TimeUnit.SECONDS);
+    boolean completed = complete.await(10, TimeUnit.SECONDS);
     assertThat(completed)
         .as("All threads should complete")
         .isTrue();
 
-    // Verify all threads got timeout or cancellation exceptions
-    // When one thread times out and cancels the shared future, other threads get CancellationException
     assertThat(exceptions)
-        .as("All threads should get timeout or cancellation exceptions")
+        .as("All threads should get ServiceUnavailableException")
         .hasSize(threadCount)
-        .allMatch(e -> e instanceof ServiceUnavailableException
-            && (e.getCause() instanceof TimeoutException
-                || e.getCause() instanceof CancellationException));
+        .allMatch(e -> e instanceof ServiceUnavailableException);
 
     // Cleanup
     executor.shutdown();
@@ -717,6 +765,8 @@ class TokenManagerConcurrencyTest {
         .isTrue();
 
     timeoutManager.close();
+    shortTimeoutClient.dispatcher().executorService().shutdown();
+    shortTimeoutClient.connectionPool().evictAll();
   }
 
   /**
@@ -733,7 +783,7 @@ class TokenManagerConcurrencyTest {
    */
   @Test
   void shouldHandleHeavyLockContentionWithoutStarvation() throws Exception {
-    // Given - Get expired token first
+    // Given - Get token expired by threshold (1s < 30s)
     mockWebServer.enqueue(new MockResponse()
                               .setResponseCode(200)
                               .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
@@ -741,7 +791,7 @@ class TokenManagerConcurrencyTest {
             {
                 "access_token": "expired-token",
                 "token_type": "Bearer",
-                "expires_in": 0
+                "expires_in": 1
             }
             """));
 
@@ -802,11 +852,26 @@ class TokenManagerConcurrencyTest {
   }
 
   /**
-   * Tests that a thread can be interrupted while waiting for token refresh
+   * Tests that a thread can be interrupted while waiting for token refresh.
+   * MutableClock advances past the 1s token expiry to prevent graceful degradation.
    */
   @Test
   void shouldHandleThreadInterruptsDuringConcurrentOperations() throws Exception {
-    // Get an expired token to force refresh
+    MutableClock testClock = new MutableClock(Instant.now());
+
+    TokenConfig interruptConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("interrupt-test-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(REFRESH_THRESHOLD)
+        .clock(testClock)
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager interruptManager = new OAuth2TokenManager(interruptConfig);
+
+    // Get a token expired by threshold
     mockWebServer.enqueue(new MockResponse()
                               .setResponseCode(200)
                               .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
@@ -814,24 +879,32 @@ class TokenManagerConcurrencyTest {
             {
                 "access_token": "expired-token",
                 "token_type": "Bearer",
-                "expires_in": 0
+                "expires_in": 1
             }
             """));
 
-    tokenManager.getToken();
+    interruptManager.getToken();
+    testClock.advance(Duration.ofSeconds(2));
 
-    // Configure a very slow refresh response
-    mockWebServer.enqueue(new MockResponse()
-                              .setResponseCode(200)
-                              .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
-                              .setBodyDelay(3, TimeUnit.SECONDS)
-                              .setBody("""
-            {
-                "access_token": "new-token",
-                "token_type": "Bearer",
-                "expires_in": 3600
-            }
-            """));
+    // Configure a very slow refresh response via Dispatcher that signals arrival
+    CountDownLatch serverReceivedRequest = new CountDownLatch(1);
+    mockWebServer.setDispatcher(new Dispatcher() {
+      @Override
+      public MockResponse dispatch(RecordedRequest request) {
+        serverReceivedRequest.countDown();
+        try { Thread.sleep(3000); } catch (InterruptedException ignored) { }
+        return new MockResponse()
+            .setResponseCode(200)
+            .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+            .setBody("""
+                {
+                    "access_token": "new-token",
+                    "token_type": "Bearer",
+                    "expires_in": 3600
+                }
+                """);
+      }
+    });
 
     // Track the exception from the interrupted thread
     Exception[] caughtException = new Exception[1];
@@ -839,7 +912,7 @@ class TokenManagerConcurrencyTest {
     // Create and start a virtual thread that will be interrupted
     Thread thread = Thread.ofVirtual().name("interrupt-test").unstarted(() -> {
       try {
-        tokenManager.getToken();
+        interruptManager.getToken();
         fail("Thread should have been interrupted");
       } catch (Exception e) {
         caughtException[0] = e;
@@ -848,8 +921,9 @@ class TokenManagerConcurrencyTest {
 
     thread.start();
 
-    // Give thread time to start and begin waiting for refresh
-    Thread.sleep(200);
+    // Wait for the refresh request to actually arrive at the server
+    boolean requestArrived = serverReceivedRequest.await(5, TimeUnit.SECONDS);
+    assertThat(requestArrived).as("Server should receive the request").isTrue();
 
     // Interrupt the thread
     thread.interrupt();
@@ -864,21 +938,32 @@ class TokenManagerConcurrencyTest {
 
     // Verify thread is not alive
     assertThat(thread.isAlive()).isFalse();
+    interruptManager.close();
   }
 
   /**
-   * Tests that threads can timeout while waiting for token refresh
+   * Tests that threads can timeout while waiting for token refresh.
+   * OkHttp read timeout (200ms) fires before the server responds (2s delay).
+   * MutableClock advances past the 1s token expiry to prevent graceful degradation.
    */
   @Test
   void shouldHandleTimeoutDuringRefresh() throws Exception {
-    // Configure short timeout for test
+    MutableClock testClock = new MutableClock(Instant.now());
+
+    OkHttpClient shortTimeoutClient = httpClient.newBuilder()
+        .retryOnConnectionFailure(false)
+        .readTimeout(Duration.ofMillis(200))
+        .build();
+
     TokenConfig shortTimeoutConfig = TokenConfig.builder()
         .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
         .clientId("refresh-timeout-test-" + UUID.randomUUID())
         .clientSecret("test-secret")
-        .httpTimeout(Duration.ofMillis(500)) // Very short timeout
+        .httpTimeout(Duration.ofMillis(500))
         .refreshThreshold(REFRESH_THRESHOLD)
-        .httpClient(httpClient)
+        .maxRetryAttempts(1)
+        .clock(testClock)
+        .httpClient(shortTimeoutClient)
         .build();
 
     OAuth2TokenManager timeoutManager = new OAuth2TokenManager(shortTimeoutConfig);
@@ -891,17 +976,18 @@ class TokenManagerConcurrencyTest {
             {
                 "access_token": "expired-token",
                 "token_type": "Bearer",
-                "expires_in": 0
+                "expires_in": 1
             }
             """));
 
     timeoutManager.getToken();
+    testClock.advance(Duration.ofSeconds(2));
 
-    // Configure a very slow refresh response
+    // Configure a very slow refresh response (delay > OkHttp read timeout)
     mockWebServer.enqueue(new MockResponse()
                               .setResponseCode(200)
                               .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
-                              .setBodyDelay(2, TimeUnit.SECONDS) // Delay longer than timeout
+                              .setBodyDelay(2, TimeUnit.SECONDS)
                               .setBody("""
             {
                 "access_token": "new-token",
@@ -924,20 +1010,19 @@ class TokenManagerConcurrencyTest {
     });
 
     thread.start();
-
-    // Wait for thread to finish
     thread.join(5000);
 
-    // Verify we got timeout exception
+    // Verify we got ServiceUnavailableException (from OkHttp timeout)
     assertThat(caughtException[0])
-        .isInstanceOf(ServiceUnavailableException.class)
-        .hasCauseInstanceOf(TimeoutException.class);
+        .isInstanceOf(ServiceUnavailableException.class);
 
     // Verify thread is not alive
     assertThat(thread.isAlive()).isFalse();
 
     // Cleanup
     timeoutManager.close();
+    shortTimeoutClient.dispatcher().executorService().shutdown();
+    shortTimeoutClient.connectionPool().evictAll();
   }
 
 

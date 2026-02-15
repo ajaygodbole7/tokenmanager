@@ -209,19 +209,17 @@ public class OAuth2TokenManager implements AutoCloseable {
    */
   private String awaitRefreshAndHandleExceptions(CompletableFuture<OAuth2Token> refreshOperation) {
     try {
-      OAuth2Token newToken = refreshOperation.get(config.getHttpTimeout().toMillis(), TimeUnit.MILLISECONDS);
+      Duration overallTimeout = computeOverallTimeout();
+      OAuth2Token newToken = refreshOperation.get(overallTimeout.toMillis(), TimeUnit.MILLISECONDS);
       return newToken.tokenValue();
     } catch (ExecutionException e) {
       Throwable cause = e.getCause();
-      // Preserve the original exception type for non-transient failures so
-      // the graceful degradation guard can distinguish permanent from transient.
-      if (cause instanceof TokenException te
-          && !(cause instanceof ServiceUnavailableException)) {
+      if (cause instanceof TokenException te) {
         throw te;
       }
       // Guard against non-TokenException RuntimeExceptions (e.g. UncheckedIOException
       // from retry exhaustion) leaking outside the sealed hierarchy.
-      if (cause instanceof RuntimeException re && !(cause instanceof TokenException)) {
+      if (cause instanceof RuntimeException re) {
         throw new ServiceUnavailableException("Unexpected runtime failure", re);
       }
       throw new ServiceUnavailableException("Service is unavailable", cause);
@@ -235,6 +233,23 @@ public class OAuth2TokenManager implements AutoCloseable {
     } catch (CancellationException e) {
       throw new ServiceUnavailableException("Token refresh was canceled", e);
     }
+  }
+
+  /**
+   * Computes the maximum time a refresh operation can legitimately take,
+   * accounting for all retry attempts and worst-case jitter between them.
+   */
+  private Duration computeOverallTimeout() {
+    long httpMs = config.getHttpTimeout().toMillis();
+    long retryDelayMs = config.getInitialRetryDelay().toMillis();
+    int maxAttempts = config.getMaxRetryAttempts();
+
+    long totalMs = httpMs; // first attempt
+    for (int i = 1; i < maxAttempts; i++) {
+      long backoff = (long) (retryDelayMs * Math.pow(2.0, i - 1) * 1.5);
+      totalMs += backoff + httpMs;
+    }
+    return Duration.ofMillis(totalMs + 5000);
   }
 
   /**
@@ -575,6 +590,14 @@ public class OAuth2TokenManager implements AutoCloseable {
     if (expiresInNode == null || !expiresInNode.canConvertToLong()) {
       log.error("Token response missing or invalid 'expires_in' for client {}", config.getClientId());
       throw new ServiceUnavailableException("Missing or invalid expires_in in response");
+    }
+
+    long expiresIn = expiresInNode.asLong();
+    if (expiresIn <= 0) {
+      log.error("Token response has non-positive 'expires_in' ({}) for client {}",
+          expiresIn, config.getClientId());
+      throw new ServiceUnavailableException(
+          "Invalid expires_in value: " + expiresIn + " (must be positive)");
     }
   }
 

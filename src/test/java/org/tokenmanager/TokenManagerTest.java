@@ -215,12 +215,9 @@ class TokenManagerTest {
             }
             """));
 
-    // When/Then: Client requests a token, should throw nested ServiceUnavailableException
+    // When/Then: Client requests a token, should throw ServiceUnavailableException
     assertThatThrownBy(() -> tokenManager.getToken())
         .isInstanceOf(ServiceUnavailableException.class)
-        .hasMessage("Service is unavailable")
-        .hasCauseExactlyInstanceOf(ServiceUnavailableException.class)
-        .getCause()
         .hasMessage("Internal server error occurred");
 
     // And: Should have made exactly one request
@@ -244,21 +241,21 @@ class TokenManagerTest {
    * - Clean up resources properly
    */
   @Test
-  void whenServerTimeout_thenThrowsServiceUnavailableException() throws Exception {
-    // OkHttp read timeout is generous (2s) so the OkHttp call itself does not
-    // time out.  The CompletableFuture.get() timeout (httpTimeout=100ms) fires
-    // first, which is the behavior this test verifies.
+  void whenOverallTimeoutExceeded_thenThrowsServiceUnavailableException() throws Exception {
+    // OkHttp readTimeout is generous (30s) — it never fires.
+    // The computed overall CF timeout (httpTimeout=100ms, maxRetryAttempts=1 → ~5100ms)
+    // fires before the server responds at 30s.
     OkHttpClient timeoutClient = httpClient.newBuilder()
-        .connectTimeout(Duration.ofSeconds(2))
-        .readTimeout(Duration.ofSeconds(2))
-        .writeTimeout(Duration.ofSeconds(2))
+        .readTimeout(Duration.ofSeconds(30))
         .build();
 
     TokenConfig shortTimeoutConfig = TokenConfig.builder()
         .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
-        .clientId("test-client")
+        .clientId("overall-timeout-" + UUID.randomUUID())
         .clientSecret("test-secret")
         .httpTimeout(Duration.ofMillis(100))
+        .maxRetryAttempts(1)
+        .initialRetryDelay(Duration.ofMillis(50))
         .refreshThreshold(REFRESH_THRESHOLD)
         .httpClient(timeoutClient)
         .build();
@@ -266,11 +263,11 @@ class TokenManagerTest {
     OAuth2TokenManager timeoutManager = new OAuth2TokenManager(shortTimeoutConfig);
 
     try {
-      // Server delays headers longer than the CF-level httpTimeout
+      // Server never responds within the overall timeout
       mockWebServer.enqueue(new MockResponse()
                                 .setResponseCode(200)
                                 .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
-                                .setHeadersDelay(500, TimeUnit.MILLISECONDS)
+                                .setHeadersDelay(30, TimeUnit.SECONDS)
                                 .setBody("""
                 {
                     "access_token": "test-token",
@@ -279,14 +276,12 @@ class TokenManagerTest {
                 }
                 """));
 
-      // CF-level timeout fires before OkHttp or retry
       assertThatThrownBy(() -> timeoutManager.getToken())
           .isInstanceOf(ServiceUnavailableException.class)
           .hasMessage("Token refresh timed out")
           .hasCauseExactlyInstanceOf(TimeoutException.class);
 
     } finally {
-      // Cleanup
       timeoutManager.close();
       timeoutClient.dispatcher().executorService().shutdown();
       timeoutClient.connectionPool().evictAll();
@@ -466,9 +461,6 @@ class TokenManagerTest {
     // When/Then: First request should fail
     assertThatThrownBy(() -> tokenManager.getToken())
         .isInstanceOf(ServiceUnavailableException.class)
-        .hasMessage("Service is unavailable")
-        .hasCauseExactlyInstanceOf(ServiceUnavailableException.class)
-        .getCause()
         .hasMessage("Missing access_token in response");
 
     // And: Should have made exactly one request
@@ -1134,7 +1126,7 @@ class TokenManagerTest {
     // Advance to t=51: 51+10=61 > 60 → invalid (within threshold)
     clock.advance(Duration.ofSeconds(2));
     assertThat(token.isValid(Duration.ofSeconds(10), clock)).isFalse();
-
+commit
     // Advance to t=70: 70+10=80 > 60 → invalid (past expiry)
     clock.advance(Duration.ofSeconds(19));
     assertThat(token.isValid(Duration.ofSeconds(10), clock)).isFalse();
@@ -2422,6 +2414,140 @@ class TokenManagerTest {
     } finally {
       manager.close();
     }
+  }
+
+  @Test
+  void shouldRejectZeroExpiresIn() throws Exception {
+    mockWebServer.enqueue(new MockResponse()
+                              .setResponseCode(200)
+                              .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+                              .setBody("""
+            {"access_token": "token", "token_type": "bearer", "expires_in": 0}
+            """));
+
+    assertThatThrownBy(() -> tokenManager.getToken())
+        .isInstanceOf(ServiceUnavailableException.class)
+        .hasMessageContaining("expires_in");
+  }
+
+  @Test
+  void shouldRejectNegativeExpiresIn() throws Exception {
+    mockWebServer.enqueue(new MockResponse()
+                              .setResponseCode(200)
+                              .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+                              .setBody("""
+            {"access_token": "token", "token_type": "bearer", "expires_in": -1}
+            """));
+
+    assertThatThrownBy(() -> tokenManager.getToken())
+        .isInstanceOf(ServiceUnavailableException.class)
+        .hasMessageContaining("expires_in");
+  }
+
+  @Test
+  void shouldRejectStringExpiresIn() throws Exception {
+    mockWebServer.enqueue(new MockResponse()
+                              .setResponseCode(200)
+                              .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+                              .setBody("""
+            {"access_token": "token", "token_type": "bearer", "expires_in": "not_a_number"}
+            """));
+
+    assertThatThrownBy(() -> tokenManager.getToken())
+        .isInstanceOf(ServiceUnavailableException.class)
+        .hasMessageContaining("expires_in");
+  }
+
+  @Test
+  void shouldCompleteAllConfiguredRetryAttempts() throws Exception {
+    OkHttpClient retryTestClient = httpClient.newBuilder()
+        .retryOnConnectionFailure(false)
+        .readTimeout(Duration.ofMillis(150))
+        .build();
+
+    TokenConfig retryConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("retry-all-" + UUID.randomUUID())
+        .clientSecret("secret")
+        .httpClient(retryTestClient)
+        .httpTimeout(Duration.ofSeconds(3))
+        .refreshThreshold(REFRESH_THRESHOLD)
+        .maxRetryAttempts(3)
+        .initialRetryDelay(Duration.ofMillis(50))
+        .build();
+
+    try (OAuth2TokenManager retryManager = new OAuth2TokenManager(retryConfig)) {
+      // Two deterministic IO failures: server delays headers beyond client readTimeout.
+      // SocketTimeoutException → UncheckedIOException → triggers Resilience4j retry.
+      mockWebServer.enqueue(new MockResponse()
+                                .setResponseCode(200)
+                                .setHeadersDelay(1, TimeUnit.SECONDS));
+      mockWebServer.enqueue(new MockResponse()
+                                .setResponseCode(200)
+                                .setHeadersDelay(1, TimeUnit.SECONDS));
+      // Third attempt succeeds immediately
+      mockWebServer.enqueue(successResponse("retry-survived-token", 3600));
+
+      String token = retryManager.getToken();
+      assertThat(token).isEqualTo("retry-survived-token");
+
+      assertThat(mockWebServer.takeRequest(2, TimeUnit.SECONDS)).isNotNull();
+      assertThat(mockWebServer.takeRequest(2, TimeUnit.SECONDS)).isNotNull();
+      assertThat(mockWebServer.takeRequest(2, TimeUnit.SECONDS)).isNotNull();
+
+      assertThat(mockWebServer.getRequestCount()).isEqualTo(3);
+    } finally {
+      retryTestClient.dispatcher().executorService().shutdown();
+      retryTestClient.connectionPool().evictAll();
+    }
+  }
+
+  @Test
+  void shouldNotTimeoutBeforeRetriesComplete() throws Exception {
+    OkHttpClient retryTestClient = httpClient.newBuilder()
+        .retryOnConnectionFailure(false)
+        .build();
+
+    TokenConfig config = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("cf-timeout-" + UUID.randomUUID())
+        .clientSecret("secret")
+        .httpClient(retryTestClient)
+        .httpTimeout(Duration.ofMillis(100))
+        .refreshThreshold(REFRESH_THRESHOLD)
+        .maxRetryAttempts(3)
+        .initialRetryDelay(Duration.ofMillis(400))
+        .build();
+
+    try (OAuth2TokenManager manager = new OAuth2TokenManager(config)) {
+      // Instant disconnects — safe with retryOnConnectionFailure(false)
+      mockWebServer.enqueue(new MockResponse()
+                                .setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST));
+      mockWebServer.enqueue(new MockResponse()
+                                .setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST));
+      mockWebServer.enqueue(successResponse("late-token", 3600));
+
+      String token = manager.getToken();
+      assertThat(token).isEqualTo("late-token");
+
+      assertThat(mockWebServer.takeRequest(2, TimeUnit.SECONDS)).isNotNull();
+      assertThat(mockWebServer.takeRequest(2, TimeUnit.SECONDS)).isNotNull();
+      assertThat(mockWebServer.takeRequest(2, TimeUnit.SECONDS)).isNotNull();
+
+      assertThat(mockWebServer.getRequestCount()).isEqualTo(3);
+    } finally {
+      retryTestClient.dispatcher().executorService().shutdown();
+      retryTestClient.connectionPool().evictAll();
+    }
+  }
+
+  private MockResponse successResponse(String tokenValue, int expiresIn) {
+    return new MockResponse()
+        .setResponseCode(200)
+        .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+        .setBody(String.format("""
+            {"access_token": "%s", "token_type": "bearer", "expires_in": %d}
+            """, tokenValue, expiresIn));
   }
 
 }
