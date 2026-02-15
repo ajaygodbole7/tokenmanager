@@ -29,6 +29,7 @@ class TokenManagerIT {
     @Test
     @Order(1)
     void keycloakRealmShouldBeConfigured() throws Exception {
+        // OIDC discovery endpoint returns correct issuer and token_endpoint for the test realm
         Request request = new Request.Builder()
                 .url(KeycloakTestSupport.KEYCLOAK.getAuthServerUrl()
                         + "/realms/test-realm/.well-known/openid-configuration")
@@ -47,6 +48,7 @@ class TokenManagerIT {
 
     @Test
     void shouldRetrieveTokenWithClientCredentials() {
+        // client_credentials grant returns a valid access token
         TokenConfig config = TokenConfig.builder()
                 .tokenEndpoint(KeycloakTestSupport.TOKEN_ENDPOINT)
                 .clientId(KeycloakTestSupport.SERVICE_CLIENT_ID)
@@ -63,6 +65,7 @@ class TokenManagerIT {
 
     @Test
     void shouldReturnValidJwtIssuedByTestRealm() throws Exception {
+        // Token is a 3-part JWT with correct issuer and a future expiry claim
         TokenConfig config = TokenConfig.builder()
                 .tokenEndpoint(KeycloakTestSupport.TOKEN_ENDPOINT)
                 .clientId(KeycloakTestSupport.SERVICE_CLIENT_ID)
@@ -93,6 +96,7 @@ class TokenManagerIT {
 
     @Test
     void shouldRetrieveTokenWithPasswordGrant() {
+        // Resource Owner Password Credentials grant returns a valid access token
         TokenConfig config = TokenConfig.builder()
                 .tokenEndpoint(KeycloakTestSupport.TOKEN_ENDPOINT)
                 .clientId(KeycloakTestSupport.PASSWORD_CLIENT_ID)
@@ -111,6 +115,7 @@ class TokenManagerIT {
 
     @Test
     void shouldThrowInvalidCredentialsForWrongClientSecret() {
+        // Wrong client_secret → Keycloak returns unauthorized_client → InvalidCredentialsException
         TokenConfig config = TokenConfig.builder()
                 .tokenEndpoint(KeycloakTestSupport.TOKEN_ENDPOINT)
                 .clientId(KeycloakTestSupport.SERVICE_CLIENT_ID)
@@ -127,6 +132,7 @@ class TokenManagerIT {
 
     @Test
     void shouldThrowInvalidCredentialsForWrongPassword() {
+        // Wrong user password → Keycloak returns invalid_grant → InvalidCredentialsException
         TokenConfig config = TokenConfig.builder()
                 .tokenEndpoint(KeycloakTestSupport.TOKEN_ENDPOINT)
                 .clientId(KeycloakTestSupport.PASSWORD_CLIENT_ID)
@@ -145,6 +151,7 @@ class TokenManagerIT {
 
     @Test
     void shouldCacheTokenAcrossMultipleCalls() {
+        // Consecutive getToken() calls return the same cached token without a network round-trip
         TokenConfig config = TokenConfig.builder()
                 .tokenEndpoint(KeycloakTestSupport.TOKEN_ENDPOINT)
                 .clientId(KeycloakTestSupport.SERVICE_CLIENT_ID)
@@ -162,6 +169,7 @@ class TokenManagerIT {
 
     @Test
     void shouldRefreshTokenAfterExpiry() {
+        // After clock advances past expiry + threshold, getToken() fetches a new token from the server
         MutableClock clock = new MutableClock(Instant.now());
 
         TokenConfig config = TokenConfig.builder()
@@ -189,6 +197,7 @@ class TokenManagerIT {
 
     @Test
     void shouldWorkWithClientSecretBasic() {
+        // CLIENT_SECRET_BASIC sends credentials in the Authorization header and obtains a token
         TokenConfig config = TokenConfig.builder()
                 .tokenEndpoint(KeycloakTestSupport.TOKEN_ENDPOINT)
                 .clientId(KeycloakTestSupport.SERVICE_CLIENT_ID)
@@ -206,6 +215,7 @@ class TokenManagerIT {
 
     @Test
     void shouldRejectInvalidScope() {
+        // Requesting a scope not configured on the client → InvalidConfigurationException
         TokenConfig config = TokenConfig.builder()
                 .tokenEndpoint(KeycloakTestSupport.TOKEN_ENDPOINT)
                 .clientId(KeycloakTestSupport.SERVICE_CLIENT_ID)
@@ -262,7 +272,7 @@ class TokenManagerIT {
 
     @Test
     void shouldReturnCachedTokenWhenServerBecomesUnavailable() throws Exception {
-        // Short-timeout client so the paused container times out quickly
+        // Graceful degradation: docker pause freezes Keycloak, refresh times out, cached token returned
         OkHttpClient shortTimeoutClient =
                 KeycloakTestSupport.createTrustAllClient(Duration.ofSeconds(2));
         MutableClock clock = new MutableClock(Instant.now());

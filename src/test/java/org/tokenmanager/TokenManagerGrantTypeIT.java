@@ -16,6 +16,7 @@ class TokenManagerGrantTypeIT {
 
     @Test
     void shouldRetrieveTokenWithAuthorizationCode() throws IOException {
+        // Full authorization_code flow: obtain auth code via browser simulation, exchange for token
         String authCode = KeycloakTestSupport.obtainAuthorizationCode(
                 KeycloakTestSupport.AUTHCODE_CLIENT_ID,
                 KeycloakTestSupport.AUTHCODE_REDIRECT_URI,
@@ -40,6 +41,7 @@ class TokenManagerGrantTypeIT {
 
     @Test
     void shouldRetrieveTokenWithRefreshToken() throws IOException {
+        // refresh_token grant exchanges a previously obtained refresh token for a new access token
         String refreshToken = KeycloakTestSupport.obtainRefreshToken(
                 KeycloakTestSupport.PASSWORD_CLIENT_ID,
                 KeycloakTestSupport.PASSWORD_CLIENT_SECRET,
@@ -63,6 +65,7 @@ class TokenManagerGrantTypeIT {
 
     @Test
     void shouldRejectReusedAuthorizationCode() throws IOException {
+        // Authorization codes are single-use: second exchange → invalid_grant → InvalidCredentialsException
         String authCode = KeycloakTestSupport.obtainAuthorizationCode(
                 KeycloakTestSupport.AUTHCODE_CLIENT_ID,
                 KeycloakTestSupport.AUTHCODE_REDIRECT_URI,

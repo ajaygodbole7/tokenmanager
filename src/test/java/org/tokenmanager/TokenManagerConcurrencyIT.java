@@ -26,6 +26,7 @@ class TokenManagerConcurrencyIT {
 
     @Test
     void shouldCoalesceFirstTokenFetchAcrossThreads() throws Exception {
+        // 10 threads calling getToken() simultaneously all receive the same token (single network request)
         TokenConfig config = TokenConfig.builder()
                 .tokenEndpoint(KeycloakTestSupport.TOKEN_ENDPOINT)
                 .clientId(KeycloakTestSupport.SERVICE_CLIENT_ID)
@@ -75,6 +76,7 @@ class TokenManagerConcurrencyIT {
 
     @Test
     void shouldCoalesceRefreshAcrossThreads() throws Exception {
+        // 10 threads triggering refresh simultaneously all receive the same new token
         MutableClock clock = new MutableClock(Instant.now());
 
         TokenConfig config = TokenConfig.builder()
@@ -137,6 +139,7 @@ class TokenManagerConcurrencyIT {
 
     @Test
     void shouldHandleHeavyConcurrentLoad() throws Exception {
+        // 20 threads x 5 iterations: no exceptions, all returned tokens are valid
         TokenConfig config = TokenConfig.builder()
                 .tokenEndpoint(KeycloakTestSupport.TOKEN_ENDPOINT)
                 .clientId(KeycloakTestSupport.SERVICE_CLIENT_ID)
