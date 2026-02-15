@@ -1254,6 +1254,54 @@ class TokenManagerTest {
   }
 
   @Test
+  void shouldParseRetryAfterHttpDate() throws Exception {
+    Instant fixedNow = Instant.parse("2026-02-14T12:00:00Z");
+    MutableClock testClock = new MutableClock(fixedNow);
+
+    TokenConfig testConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("429-httpdate-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(Duration.ofSeconds(10))
+        .clock(testClock)
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager manager = new OAuth2TokenManager(testConfig);
+
+    try {
+      // Get initial token
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(200)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {"access_token": "initial", "token_type": "Bearer", "expires_in": 60}
+              """));
+      manager.getToken();
+
+      // Advance past expiry so fallback is not possible
+      testClock.advance(Duration.ofSeconds(61));
+
+      // 429 with HTTP-date Retry-After (5 minutes from fixedNow + 61s)
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(429)
+          .addHeader("Retry-After", "Sat, 14 Feb 2026 12:06:01 GMT"));
+
+      assertThatThrownBy(manager::getToken)
+          .isInstanceOf(RateLimitedException.class)
+          .satisfies(ex -> {
+            Duration retryAfter = ((RateLimitedException) ex).getRetryAfter();
+            assertThat(retryAfter).isNotNull();
+            // Clock is at 12:01:01, Retry-After is 12:06:01 → 300s
+            assertThat(retryAfter.getSeconds()).isEqualTo(300);
+          });
+    } finally {
+      manager.close();
+    }
+  }
+
+  @Test
   void shouldNotTripCircuitBreakerOnRepeated429s() throws Exception {
     MutableClock testClock = new MutableClock(Instant.now());
 

@@ -502,16 +502,28 @@ public class OAuth2TokenManager implements AutoCloseable {
   }
 
   /**
-   * Parses a Retry-After header value (seconds) into a Duration.
-   * Returns null if the header is absent or not a valid integer.
+   * Parses a Retry-After header value into a Duration. Accepts either
+   * delay-seconds (e.g. "120") or an HTTP-date in IMF-fixdate format
+   * (e.g. "Fri, 31 Dec 1999 23:59:59 GMT") per RFC 7231 §7.1.3.
+   * Returns null if the header is absent or unparseable.
    */
   private Duration parseRetryAfter(String retryAfterHeader) {
     if (retryAfterHeader == null) {
       return null;
     }
+    String trimmed = retryAfterHeader.trim();
     try {
-      return Duration.ofSeconds(Long.parseLong(retryAfterHeader.trim()));
+      return Duration.ofSeconds(Long.parseLong(trimmed));
     } catch (NumberFormatException e) {
+      // Not an integer — try HTTP-date
+    }
+    try {
+      Instant retryAt = java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME
+          .parse(trimmed, Instant::from);
+      Duration delta = Duration.between(clock.instant(), retryAt);
+      return delta.isNegative() ? Duration.ZERO : delta;
+    } catch (java.time.format.DateTimeParseException e) {
+      log.warn("Unparseable Retry-After header: '{}'", trimmed);
       return null;
     }
   }
