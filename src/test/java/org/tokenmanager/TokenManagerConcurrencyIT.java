@@ -13,20 +13,23 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.Tag;
+import org.junit.jupiter.api.Test;
 
 /**
  * Concurrency integration tests against a real Keycloak instance.
  * Validates refresh coalescing, concurrent load handling, and thread safety
  * with actual network I/O rather than canned mock responses.
  */
+@Tag("integration")
 class TokenManagerConcurrencyIT {
 
-    @org.junit.jupiter.api.Test
+    @Test
     void shouldCoalesceFirstTokenFetchAcrossThreads() throws Exception {
         TokenConfig config = TokenConfig.builder()
                 .tokenEndpoint(KeycloakTestSupport.TOKEN_ENDPOINT)
-                .clientId("test-service-client")
-                .clientSecret("test-service-secret")
+                .clientId(KeycloakTestSupport.SERVICE_CLIENT_ID)
+                .clientSecret(KeycloakTestSupport.SERVICE_CLIENT_SECRET)
                 .grantType(OAuth2GrantType.CLIENT_CREDENTIALS)
                 .httpClient(KeycloakTestSupport.HTTP_CLIENT)
                 .build();
@@ -34,6 +37,7 @@ class TokenManagerConcurrencyIT {
         try (var manager = new OAuth2TokenManager(config)) {
             int threadCount = 10;
             Set<String> tokens = ConcurrentHashMap.newKeySet();
+            List<Exception> errors = Collections.synchronizedList(new ArrayList<>());
             CountDownLatch ready = new CountDownLatch(threadCount);
             CountDownLatch go = new CountDownLatch(1);
             CountDownLatch done = new CountDownLatch(threadCount);
@@ -45,21 +49,23 @@ class TokenManagerConcurrencyIT {
                         ready.countDown();
                         go.await();
                         tokens.add(manager.getToken());
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
+                    } catch (Exception e) {
+                        errors.add(e);
                     } finally {
                         done.countDown();
                     }
                 });
             }
 
-            ready.await(5, TimeUnit.SECONDS);
+            assertThat(ready.await(10, TimeUnit.SECONDS))
+                    .as("All threads should be ready").isTrue();
             go.countDown();
 
             assertThat(done.await(30, TimeUnit.SECONDS))
                     .as("All threads should complete")
                     .isTrue();
 
+            assertThat(errors).as("No threads should fail").isEmpty();
             assertThat(tokens).hasSize(1);
 
             executor.shutdown();
@@ -67,14 +73,14 @@ class TokenManagerConcurrencyIT {
         }
     }
 
-    @org.junit.jupiter.api.Test
+    @Test
     void shouldCoalesceRefreshAcrossThreads() throws Exception {
         MutableClock clock = new MutableClock(Instant.now());
 
         TokenConfig config = TokenConfig.builder()
                 .tokenEndpoint(KeycloakTestSupport.TOKEN_ENDPOINT)
-                .clientId("test-service-client")
-                .clientSecret("test-service-secret")
+                .clientId(KeycloakTestSupport.SERVICE_CLIENT_ID)
+                .clientSecret(KeycloakTestSupport.SERVICE_CLIENT_SECRET)
                 .grantType(OAuth2GrantType.CLIENT_CREDENTIALS)
                 .refreshThreshold(Duration.ofSeconds(5))
                 .clock(clock)
@@ -85,11 +91,13 @@ class TokenManagerConcurrencyIT {
             String initial = manager.getToken();
             assertThat(initial).isNotNull();
 
-            // Advance past the 60s accessTokenLifespan + 5s threshold
-            clock.advance(Duration.ofSeconds(66));
+            // Advance past realm's accessTokenLifespan + threshold
+            clock.advance(Duration.ofSeconds(
+                    KeycloakTestSupport.REALM_TOKEN_LIFETIME_SECONDS + 6));
 
             int threadCount = 10;
             Set<String> tokens = ConcurrentHashMap.newKeySet();
+            List<Exception> errors = Collections.synchronizedList(new ArrayList<>());
             CountDownLatch ready = new CountDownLatch(threadCount);
             CountDownLatch go = new CountDownLatch(1);
             CountDownLatch done = new CountDownLatch(threadCount);
@@ -101,21 +109,23 @@ class TokenManagerConcurrencyIT {
                         ready.countDown();
                         go.await();
                         tokens.add(manager.getToken());
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
+                    } catch (Exception e) {
+                        errors.add(e);
                     } finally {
                         done.countDown();
                     }
                 });
             }
 
-            ready.await(5, TimeUnit.SECONDS);
+            assertThat(ready.await(10, TimeUnit.SECONDS))
+                    .as("All threads should be ready").isTrue();
             go.countDown();
 
             assertThat(done.await(30, TimeUnit.SECONDS))
                     .as("All threads should complete")
                     .isTrue();
 
+            assertThat(errors).as("No threads should fail").isEmpty();
             // All threads get the same refreshed token, different from initial
             assertThat(tokens).hasSize(1);
             assertThat(tokens.iterator().next()).isNotEqualTo(initial);
@@ -125,12 +135,12 @@ class TokenManagerConcurrencyIT {
         }
     }
 
-    @org.junit.jupiter.api.Test
+    @Test
     void shouldHandleHeavyConcurrentLoad() throws Exception {
         TokenConfig config = TokenConfig.builder()
                 .tokenEndpoint(KeycloakTestSupport.TOKEN_ENDPOINT)
-                .clientId("test-service-client")
-                .clientSecret("test-service-secret")
+                .clientId(KeycloakTestSupport.SERVICE_CLIENT_ID)
+                .clientSecret(KeycloakTestSupport.SERVICE_CLIENT_SECRET)
                 .grantType(OAuth2GrantType.CLIENT_CREDENTIALS)
                 .httpClient(KeycloakTestSupport.HTTP_CLIENT)
                 .build();

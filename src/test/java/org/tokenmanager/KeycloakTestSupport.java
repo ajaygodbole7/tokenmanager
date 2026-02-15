@@ -28,9 +28,41 @@ import okhttp3.Response;
  * Shared Keycloak container and helpers for integration tests.
  * Uses the singleton container pattern: one Keycloak instance per JVM,
  * shared across all IT classes.
+ *
+ * <h3>Test realm contract (test-realm-realm.json)</h3>
+ * <pre>
+ * Realm: test-realm
+ * Access token lifespan: 60 seconds
+ *
+ * Clients:
+ *   test-service-client / test-service-secret
+ *     - client_credentials (serviceAccountsEnabled)
+ *     - Accepts CLIENT_SECRET_POST and CLIENT_SECRET_BASIC
+ *   test-password-client / test-password-secret
+ *     - password grant (directAccessGrantsEnabled)
+ *   test-authcode-client / test-authcode-secret
+ *     - authorization_code (standardFlowEnabled)
+ *     - redirect: http://localhost/callback
+ *
+ * Users:
+ *   testuser / testpass
+ * </pre>
  */
 final class KeycloakTestSupport {
 
+    // ---- Realm contract constants (keep in sync with test-realm-realm.json) ----
+    static final int REALM_TOKEN_LIFETIME_SECONDS = 60;
+    static final String SERVICE_CLIENT_ID = "test-service-client";
+    static final String SERVICE_CLIENT_SECRET = "test-service-secret";
+    static final String PASSWORD_CLIENT_ID = "test-password-client";
+    static final String PASSWORD_CLIENT_SECRET = "test-password-secret";
+    static final String AUTHCODE_CLIENT_ID = "test-authcode-client";
+    static final String AUTHCODE_CLIENT_SECRET = "test-authcode-secret";
+    static final String AUTHCODE_REDIRECT_URI = "http://localhost/callback";
+    static final String TEST_USERNAME = "testuser";
+    static final String TEST_PASSWORD = "testpass";
+
+    // ---- Container and derived state ----
     static final KeycloakContainer KEYCLOAK;
     static final String TOKEN_ENDPOINT;
     static final OkHttpClient HTTP_CLIENT;
@@ -39,10 +71,15 @@ final class KeycloakTestSupport {
     private static final Pattern AUTH_CODE_PATTERN = Pattern.compile("[?&]code=([^&]+)");
 
     static {
-        KEYCLOAK = new KeycloakContainer()
-                .withRealmImportFile("test-realm-realm.json")
-                .useTls();
-        KEYCLOAK.start();
+        try {
+            KEYCLOAK = new KeycloakContainer("quay.io/keycloak/keycloak:26.5")
+                    .withRealmImportFile("test-realm-realm.json")
+                    .useTls();
+            KEYCLOAK.start();
+        } catch (Exception e) {
+            throw new IllegalStateException(
+                    "Keycloak container failed to start. Is Docker running?", e);
+        }
         TOKEN_ENDPOINT = KEYCLOAK.getAuthServerUrl()
                 + "/realms/test-realm/protocol/openid-connect/token";
         HTTP_CLIENT = createTrustAllClient(Duration.ofSeconds(15));
@@ -158,16 +195,41 @@ final class KeycloakTestSupport {
                 .build();
 
         try (Response response = HTTP_CLIENT.newCall(request).execute()) {
+            String bodyString = response.body() != null ? response.body().string() : "";
             if (!response.isSuccessful()) {
                 throw new IOException("Failed to obtain refresh token: " + response.code()
-                        + " " + response.body().string());
+                        + " " + bodyString);
             }
-            JsonNode node = OBJECT_MAPPER.readTree(response.body().string());
+            JsonNode node = OBJECT_MAPPER.readTree(bodyString);
             JsonNode refreshToken = node.get("refresh_token");
             if (refreshToken == null) {
                 throw new IOException("No refresh_token in response");
             }
             return refreshToken.asText();
+        }
+    }
+
+    /**
+     * Freezes the Keycloak container using cgroups (docker pause).
+     * Existing TCP connections will hang until their read timeout expires.
+     * Always call {@link #unpauseKeycloak()} in a finally block.
+     */
+    static void pauseKeycloak() throws IOException, InterruptedException {
+        int exit = new ProcessBuilder("docker", "pause", KEYCLOAK.getContainerId())
+                .redirectErrorStream(true).start().waitFor();
+        if (exit != 0) {
+            throw new IOException("docker pause failed with exit code " + exit);
+        }
+    }
+
+    /**
+     * Unfreezes the Keycloak container after a {@link #pauseKeycloak()} call.
+     */
+    static void unpauseKeycloak() throws IOException, InterruptedException {
+        int exit = new ProcessBuilder("docker", "unpause", KEYCLOAK.getContainerId())
+                .redirectErrorStream(true).start().waitFor();
+        if (exit != 0) {
+            throw new IOException("docker unpause failed with exit code " + exit);
         }
     }
 
