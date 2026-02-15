@@ -1126,7 +1126,7 @@ class TokenManagerTest {
     // Advance to t=51: 51+10=61 > 60 → invalid (within threshold)
     clock.advance(Duration.ofSeconds(2));
     assertThat(token.isValid(Duration.ofSeconds(10), clock)).isFalse();
-commit
+
     // Advance to t=70: 70+10=80 > 60 → invalid (past expiry)
     clock.advance(Duration.ofSeconds(19));
     assertThat(token.isValid(Duration.ofSeconds(10), clock)).isFalse();

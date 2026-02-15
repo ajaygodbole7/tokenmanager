@@ -480,7 +480,7 @@ public class OAuth2TokenManager implements AutoCloseable {
         : errorCode.toString();
 
     switch (errorCode) {
-      case INVALID_CLIENT, INVALID_GRANT ->
+      case INVALID_CLIENT, INVALID_GRANT, UNAUTHORIZED_CLIENT ->
           throw new InvalidCredentialsException(errorDescription);
       case INVALID_REQUEST, INVALID_SCOPE, UNSUPPORTED_GRANT_TYPE ->
           throw new InvalidConfigurationException(errorDescription);

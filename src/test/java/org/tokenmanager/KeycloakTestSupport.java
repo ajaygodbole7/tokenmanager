@@ -9,12 +9,17 @@ import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
+import okhttp3.Cookie;
+import okhttp3.CookieJar;
 import okhttp3.FormBody;
+import okhttp3.HttpUrl;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
@@ -35,7 +40,7 @@ final class KeycloakTestSupport {
 
     static {
         KEYCLOAK = new KeycloakContainer()
-                .withRealmImportFile("test-realm.json")
+                .withRealmImportFile("test-realm-realm.json")
                 .useTls();
         KEYCLOAK.start();
         TOKEN_ENDPOINT = KEYCLOAK.getAuthServerUrl()
@@ -83,6 +88,7 @@ final class KeycloakTestSupport {
             String username, String password) throws IOException {
         OkHttpClient noRedirectClient = HTTP_CLIENT.newBuilder()
                 .followRedirects(false)
+                .cookieJar(new InMemoryCookieJar())
                 .build();
 
         String authUrl = KEYCLOAK.getAuthServerUrl()
@@ -174,5 +180,19 @@ final class KeycloakTestSupport {
         }
         // Keycloak HTML-encodes ampersands in the action URL
         return matcher.group(1).replace("&amp;", "&");
+    }
+
+    private static class InMemoryCookieJar implements CookieJar {
+        private final List<Cookie> cookies = new ArrayList<>();
+
+        @Override
+        public void saveFromResponse(HttpUrl url, List<Cookie> cookies) {
+            this.cookies.addAll(cookies);
+        }
+
+        @Override
+        public List<Cookie> loadForRequest(HttpUrl url) {
+            return cookies;
+        }
     }
 }

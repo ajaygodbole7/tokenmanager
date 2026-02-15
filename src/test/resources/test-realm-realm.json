@@ -44,6 +44,11 @@
     {
       "username": "testuser",
       "enabled": true,
+      "email": "testuser@example.com",
+      "emailVerified": true,
+      "firstName": "Test",
+      "lastName": "User",
+      "requiredActions": [],
       "credentials": [
         {
           "type": "password",
