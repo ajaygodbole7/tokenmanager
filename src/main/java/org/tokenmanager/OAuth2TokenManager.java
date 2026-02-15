@@ -171,10 +171,12 @@ public class OAuth2TokenManager implements AutoCloseable {
       // Step 4: Wait for refresh and handle exceptions
       return awaitRefreshAndHandleExceptions(refreshOperation);
     } catch (TokenException e) {
-      // Graceful degradation: if the current token is not yet expired, return it
-      // instead of throwing. This covers proactive refresh failures (429, 500, CB open, etc.)
-      if (clock.instant().isBefore(currentToken.expiresAt())) {
-        log.warn("Token refresh failed for client {}. Returning current token (expires at {}): {}",
+      // Graceful degradation for transient failures only. Permanent failures
+      // (credentials, configuration, endpoint) are rethrown immediately so they
+      // are not masked until the cached token happens to expire.
+      if (e instanceof ServiceUnavailableException
+          && clock.instant().isBefore(currentToken.expiresAt())) {
+        log.warn("Transient refresh failure for client {}. Returning current token (expires at {}): {}",
             config.getClientId(), currentToken.expiresAt(), e.getMessage());
         return currentToken.tokenValue();
       }

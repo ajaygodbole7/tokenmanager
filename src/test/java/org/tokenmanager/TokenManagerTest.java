@@ -1274,6 +1274,63 @@ class TokenManagerTest {
   }
 
   @Test
+  void shouldNotFallbackOnInvalidCredentials() throws Exception {
+    MutableClock testClock = new MutableClock(Instant.now());
+
+    TokenConfig testConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("cred-fail-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(Duration.ofSeconds(10))
+        .clock(testClock)
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager manager = new OAuth2TokenManager(testConfig);
+
+    try {
+      // Get initial token with 60s expiry
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(200)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {
+                  "access_token": "good-token",
+                  "token_type": "Bearer",
+                  "expires_in": 60
+              }
+              """));
+
+      String initial = manager.getToken();
+      assertThat(initial).isEqualTo("good-token");
+
+      // Advance clock into refresh threshold but before expiry
+      // Token still valid (t=51 < t=60), but needs refresh (51+10=61 > 60)
+      testClock.advance(Duration.ofSeconds(51));
+
+      // Server responds with 401 — credential rotation failure
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(401)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {
+                  "error": "invalid_client",
+                  "error_description": "Client authentication failed"
+              }
+              """));
+
+      // Must throw immediately — not fall back to cached token.
+      // Credential errors are permanent; masking them until the token
+      // expires would delay detection of a credential rotation failure.
+      assertThatThrownBy(manager::getToken)
+          .isInstanceOf(InvalidCredentialsException.class);
+    } finally {
+      manager.close();
+    }
+  }
+
+  @Test
   void shouldThrowOn500WhenTokenExpired() throws Exception {
     MutableClock testClock = new MutableClock(Instant.now());
 
