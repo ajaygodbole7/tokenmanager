@@ -359,7 +359,7 @@ public class OAuth2TokenManager implements AutoCloseable {
     requestBuilder.post(formBuilder.build());
 
     try (Response response = httpClient.newCall(requestBuilder.build()).execute()) {
-      if (!response.isSuccessful() || response.body() == null) {
+      if (!response.isSuccessful()) {
         handleErrorResponse(response);
       }
 

@@ -495,6 +495,18 @@ class TokenManagerTest {
     assertThat(token).isEqualTo("valid-token");
   }
   /**
+  @Test
+  void shouldThrowServiceUnavailableFor2xxWithEmptyBody() throws Exception {
+    // 200 with empty body is a malformed response, not an endpoint error.
+    mockWebServer.enqueue(new MockResponse()
+        .setResponseCode(200)
+        .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON));
+
+    assertThatThrownBy(() -> tokenManager.getToken())
+        .isInstanceOf(ServiceUnavailableException.class);
+  }
+
+  /**
    * Tests TokenManager's handling of different OAuth2 configurations:
    * - Different grant types (PASSWORD, CLIENT_CREDENTIALS)
    * - Scopes in request and response
