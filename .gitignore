@@ -201,3 +201,11 @@ spring-boot-*.pid
 .docker/
 docker-compose.override.yml
 
+######################
+# Claude Code / Local Plans
+######################
+CLAUDE.md
+CHAINED_BRANCHES_PLAN.md
+NEXT_ITERATION_PLAN.md
+docs/
+
