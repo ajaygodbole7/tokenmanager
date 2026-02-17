@@ -16,6 +16,7 @@ import io.github.resilience4j.retry.RetryRegistry;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.UnknownHostException;
+import javax.net.ssl.SSLHandshakeException;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
@@ -31,6 +32,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
@@ -86,7 +88,7 @@ public class OAuth2TokenManager implements TokenProvider {
   private final ReentrantLock refreshLock = new ReentrantLock();
   // Current valid or soon-to-be-refreshed token
   private volatile OAuth2Token currentToken;
-  private volatile boolean closed;
+  private final AtomicBoolean closed = new AtomicBoolean(false);
   private volatile boolean refreshWarningLogged = false;
   /**
    * Represents the ongoing token refresh operation.
@@ -158,7 +160,7 @@ public class OAuth2TokenManager implements TokenProvider {
 
   @Override
   public CompletableFuture<String> getTokenAsync() {
-    if (closed) {
+    if (closed.get()) {
       return CompletableFuture.failedFuture(
           new IllegalStateException("TokenManager is closed"));
     }
@@ -257,7 +259,7 @@ public class OAuth2TokenManager implements TokenProvider {
     }
     if (cause instanceof RuntimeException re) {
       for (Throwable t = re; t != null; t = t.getCause()) {
-        if (t instanceof UnknownHostException) {
+        if (t instanceof UnknownHostException || t instanceof SSLHandshakeException) {
           return new InvalidEndpointException("Token endpoint unreachable", t);
         }
       }
@@ -728,7 +730,7 @@ public class OAuth2TokenManager implements TokenProvider {
             .retryOnException(e -> {
               if (e instanceof UncheckedIOException) {
                 for (Throwable t = e; t != null; t = t.getCause()) {
-                  if (t instanceof UnknownHostException) {
+                  if (t instanceof UnknownHostException || t instanceof SSLHandshakeException) {
                     return false;
                   }
                 }
@@ -819,10 +821,9 @@ public class OAuth2TokenManager implements TokenProvider {
    */
   @Override
   public void close() {
-    if (closed) {
+    if (!closed.compareAndSet(false, true)) {
       return;
     }
-    closed = true;
 
     // Cancel any ongoing refresh operation safely under the lock
     refreshLock.lock();

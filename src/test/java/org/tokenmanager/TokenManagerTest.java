@@ -488,7 +488,7 @@ class TokenManagerTest {
     // Then: Should get valid token
     assertThat(token).isEqualTo("valid-token");
   }
-  /**
+
   @Test
   void shouldThrowServiceUnavailableFor2xxWithEmptyBody() throws Exception {
     // 200 with empty body is a malformed response, not an endpoint error.
