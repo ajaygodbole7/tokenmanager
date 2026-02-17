@@ -47,6 +47,8 @@ public class TokenConfig {
   @Default int circuitBreakerMinimumCalls = 3;
   @NonNull @Default Duration circuitBreakerWaitDuration = Duration.ofSeconds(60);
 
+  @Default boolean eagerFetch = false;
+
   // Fields for other grant types
   String username; // For password grant
   String password;

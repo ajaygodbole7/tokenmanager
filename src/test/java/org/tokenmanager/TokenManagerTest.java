@@ -2928,6 +2928,102 @@ class TokenManagerTest {
     }
   }
 
+  @Test
+  void shouldImplementTokenProviderInterface() {
+    // OAuth2TokenManager implements the TokenProvider interface
+    assertThat(tokenManager).isInstanceOf(TokenProvider.class);
+  }
+
+  @Test
+  void shouldEagerFetchTokenOnConstruction() throws Exception {
+    // eagerFetch triggers async warm-up; first getToken() returns without a second HTTP call
+    mockWebServer.enqueue(new MockResponse()
+        .setResponseCode(200)
+        .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+        .setBodyDelay(200, TimeUnit.MILLISECONDS)
+        .setBody("""
+            {"access_token": "eager-token", "token_type": "Bearer", "expires_in": 3600}
+            """));
+
+    TokenConfig eagerConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("eager-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(REFRESH_THRESHOLD)
+        .httpClient(httpClient)
+        .eagerFetch(true)
+        .build();
+
+    try (OAuth2TokenManager manager = new OAuth2TokenManager(eagerConfig)) {
+      // Wait for warm-up to complete
+      Thread.sleep(500);
+
+      String token = manager.getToken();
+      assertThat(token).isEqualTo("eager-token");
+      assertThat(mockWebServer.getRequestCount()).isEqualTo(1);
+    }
+  }
+
+  @Test
+  void shouldCoalesceFirstGetTokenWithEagerFetch() throws Exception {
+    // getToken() called immediately after construction coalesces onto the warm-up future
+    mockWebServer.enqueue(new MockResponse()
+        .setResponseCode(200)
+        .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+        .setBodyDelay(500, TimeUnit.MILLISECONDS)
+        .setBody("""
+            {"access_token": "coalesced-eager", "token_type": "Bearer", "expires_in": 3600}
+            """));
+
+    TokenConfig eagerConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("coalesce-eager-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(REFRESH_THRESHOLD)
+        .httpClient(httpClient)
+        .eagerFetch(true)
+        .build();
+
+    try (OAuth2TokenManager manager = new OAuth2TokenManager(eagerConfig)) {
+      // Call getToken() immediately — coalesces onto warm-up
+      String token = manager.getToken();
+      assertThat(token).isEqualTo("coalesced-eager");
+      assertThat(mockWebServer.getRequestCount()).isEqualTo(1);
+    }
+  }
+
+  @Test
+  void shouldWorkNormallyWithEagerFetchDisabled() throws Exception {
+    // Default eagerFetch(false): no HTTP request until first getToken() call
+    TokenConfig lazyConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("lazy-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(REFRESH_THRESHOLD)
+        .httpClient(httpClient)
+        .eagerFetch(false)
+        .build();
+
+    try (OAuth2TokenManager manager = new OAuth2TokenManager(lazyConfig)) {
+      // No request made yet
+      assertThat(mockWebServer.getRequestCount()).isEqualTo(0);
+
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(200)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {"access_token": "lazy-token", "token_type": "Bearer", "expires_in": 3600}
+              """));
+
+      String token = manager.getToken();
+      assertThat(token).isEqualTo("lazy-token");
+      assertThat(mockWebServer.getRequestCount()).isEqualTo(1);
+    }
+  }
+
   private MockResponse successResponse(String tokenValue, int expiresIn) {
     return new MockResponse()
         .setResponseCode(200)

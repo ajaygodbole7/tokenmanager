@@ -1214,6 +1214,69 @@ class TokenManagerConcurrencyTest {
     }
   }
 
+  @Test
+  void shouldCoalesceEagerFetchWithConcurrentGetToken() throws Exception {
+    // eagerFetch warm-up and 10 concurrent getToken() calls share a single HTTP request
+    mockWebServer.enqueue(new MockResponse()
+        .setResponseCode(200)
+        .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+        .setBodyDelay(500, TimeUnit.MILLISECONDS)
+        .setBody("""
+            {"access_token": "eager-coalesced", "token_type": "Bearer", "expires_in": 3600}
+            """));
+
+    TokenConfig eagerConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("eager-concurrent-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(REFRESH_THRESHOLD)
+        .httpClient(httpClient)
+        .eagerFetch(true)
+        .build();
+
+    OAuth2TokenManager manager = new OAuth2TokenManager(eagerConfig);
+
+    try {
+      int threadCount = 10;
+      Set<String> tokens = ConcurrentHashMap.newKeySet();
+      List<Exception> errors = Collections.synchronizedList(new ArrayList<>());
+      CountDownLatch done = new CountDownLatch(threadCount);
+
+      ExecutorService executor = Executors.newFixedThreadPool(threadCount);
+      for (int i = 0; i < threadCount; i++) {
+        executor.submit(() -> {
+          try {
+            tokens.add(manager.getToken());
+          } catch (Exception e) {
+            errors.add(e);
+          } finally {
+            done.countDown();
+          }
+        });
+      }
+
+      assertThat(done.await(30, TimeUnit.SECONDS))
+          .as("All threads should complete within timeout").isTrue();
+
+      assertThat(errors).as("No threads should fail").isEmpty();
+
+      assertThat(tokens)
+          .as("All threads + warm-up should share the same token")
+          .hasSize(1)
+          .containsExactly("eager-coalesced");
+
+      assertThat(mockWebServer.getRequestCount())
+          .as("Warm-up + all getToken() calls should produce exactly 1 HTTP request")
+          .isEqualTo(1);
+
+      executor.shutdown();
+      assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+    } finally {
+      manager.close();
+    }
+  }
+
 }
 
 

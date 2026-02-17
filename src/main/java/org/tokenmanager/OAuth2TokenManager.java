@@ -60,7 +60,7 @@ import okhttp3.Response;
  * - If multiple threads call `getToken()` and a refresh is needed, they all wait on the same future, ensuring that only one refresh is executed.
  */
 @Slf4j
-public class OAuth2TokenManager implements AutoCloseable {
+public class OAuth2TokenManager implements TokenProvider {
 
   // Default configurations and constants
   private static final Duration DEFAULT_HTTP_TIMEOUT = Duration.ofSeconds(10);
@@ -114,6 +114,10 @@ public class OAuth2TokenManager implements AutoCloseable {
 
     // Initialize with an invalid token to force a refresh on first call
     this.currentToken = OAuth2Token.invalidToken();
+
+    if (config.isEagerFetch()) {
+      refreshToken();
+    }
   }
 
   /**
