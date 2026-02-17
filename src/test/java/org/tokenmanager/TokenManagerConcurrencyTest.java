@@ -2,6 +2,7 @@ package org.tokenmanager;
 
 import java.util.Collections;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 
 import okhttp3.OkHttpClient;
 import okhttp3.mockwebserver.Dispatcher;
@@ -1275,6 +1276,123 @@ class TokenManagerConcurrencyTest {
     } finally {
       manager.close();
     }
+  }
+
+  /**
+   * Tests that multiple threads calling getTokenAsync() concurrently share a single HTTP request.
+   */
+  @Test
+  void shouldCoalesceAsyncRequests() throws Exception {
+    mockWebServer.enqueue(new MockResponse()
+        .setResponseCode(200)
+        .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+        .setBody(String.format("""
+            {"access_token": "%s", "token_type": "Bearer", "expires_in": 3600}
+            """, EXPECTED_TOKEN)));
+
+    int threadCount = 10;
+    Set<String> uniqueTokens = ConcurrentHashMap.newKeySet();
+    List<Exception> errors = Collections.synchronizedList(new ArrayList<>());
+    CountDownLatch ready = new CountDownLatch(threadCount);
+    CountDownLatch go = new CountDownLatch(1);
+    CountDownLatch done = new CountDownLatch(threadCount);
+
+    ExecutorService executor = Executors.newFixedThreadPool(threadCount);
+    for (int i = 0; i < threadCount; i++) {
+      executor.submit(() -> {
+        try {
+          ready.countDown();
+          go.await();
+          String token = tokenManager.getTokenAsync().get(10, TimeUnit.SECONDS);
+          uniqueTokens.add(token);
+        } catch (Exception e) {
+          errors.add(e);
+        } finally {
+          done.countDown();
+        }
+      });
+    }
+
+    assertThat(ready.await(10, TimeUnit.SECONDS))
+        .as("All threads should be ready").isTrue();
+    go.countDown();
+
+    assertThat(done.await(30, TimeUnit.SECONDS))
+        .as("All threads should complete within timeout").isTrue();
+
+    assertThat(errors).as("No threads should fail").isEmpty();
+
+    assertThat(uniqueTokens)
+        .as("All threads should receive the same token")
+        .hasSize(1)
+        .containsExactly(EXPECTED_TOKEN);
+
+    assertThat(mockWebServer.getRequestCount())
+        .as("Should make exactly 1 HTTP request despite 10 async callers")
+        .isEqualTo(1);
+
+    executor.shutdown();
+    assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+  }
+
+  /**
+   * Tests that mixed sync getToken() and async getTokenAsync() calls share a single HTTP request.
+   */
+  @Test
+  void shouldHandleMixedSyncAndAsyncCalls() throws Exception {
+    mockWebServer.enqueue(new MockResponse()
+        .setResponseCode(200)
+        .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+        .setBody(String.format("""
+            {"access_token": "%s", "token_type": "Bearer", "expires_in": 3600}
+            """, EXPECTED_TOKEN)));
+
+    int threadCount = 10;
+    Set<String> uniqueTokens = ConcurrentHashMap.newKeySet();
+    List<Exception> errors = Collections.synchronizedList(new ArrayList<>());
+    CountDownLatch ready = new CountDownLatch(threadCount);
+    CountDownLatch go = new CountDownLatch(1);
+    CountDownLatch done = new CountDownLatch(threadCount);
+
+    ExecutorService executor = Executors.newFixedThreadPool(threadCount);
+    for (int i = 0; i < threadCount; i++) {
+      final boolean useAsync = (i % 2 == 0);
+      executor.submit(() -> {
+        try {
+          ready.countDown();
+          go.await();
+          String token = useAsync
+              ? tokenManager.getTokenAsync().get(10, TimeUnit.SECONDS)
+              : tokenManager.getToken();
+          uniqueTokens.add(token);
+        } catch (Exception e) {
+          errors.add(e);
+        } finally {
+          done.countDown();
+        }
+      });
+    }
+
+    assertThat(ready.await(10, TimeUnit.SECONDS))
+        .as("All threads should be ready").isTrue();
+    go.countDown();
+
+    assertThat(done.await(30, TimeUnit.SECONDS))
+        .as("All threads should complete within timeout").isTrue();
+
+    assertThat(errors).as("No threads should fail").isEmpty();
+
+    assertThat(uniqueTokens)
+        .as("All threads should receive the same token")
+        .hasSize(1)
+        .containsExactly(EXPECTED_TOKEN);
+
+    assertThat(mockWebServer.getRequestCount())
+        .as("Should make exactly 1 HTTP request despite mixed sync/async callers")
+        .isEqualTo(1);
+
+    executor.shutdown();
+    assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
   }
 
 }

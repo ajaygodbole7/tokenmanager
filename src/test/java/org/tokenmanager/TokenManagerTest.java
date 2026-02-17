@@ -2,6 +2,8 @@ package org.tokenmanager;
 
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 import io.github.resilience4j.core.IntervalFunction;
 import okhttp3.OkHttpClient;
@@ -3022,6 +3024,162 @@ class TokenManagerTest {
       assertThat(token).isEqualTo("lazy-token");
       assertThat(mockWebServer.getRequestCount()).isEqualTo(1);
     }
+  }
+
+  // --- getTokenAsync() tests ---
+
+  @Test
+  void shouldReturnCompletedFutureForCachedToken() throws Exception {
+    // Prime the cache
+    mockWebServer.enqueue(new MockResponse()
+        .setResponseCode(200)
+        .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+        .setBody("""
+            {"access_token": "cached-async", "token_type": "Bearer", "expires_in": 3600}
+            """));
+
+    tokenManager.getToken();
+    assertThat(mockWebServer.getRequestCount()).isEqualTo(1);
+
+    // Async call should return an already-completed future from cache
+    CompletableFuture<String> future = tokenManager.getTokenAsync();
+    assertThat(future.isDone()).isTrue();
+    assertThat(future.get()).isEqualTo("cached-async");
+
+    // No additional HTTP request
+    assertThat(mockWebServer.getRequestCount()).isEqualTo(1);
+  }
+
+  @Test
+  void shouldReturnTokenFromGetTokenAsync() throws Exception {
+    mockWebServer.enqueue(new MockResponse()
+        .setResponseCode(200)
+        .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+        .setBody("""
+            {"access_token": "async-token", "token_type": "Bearer", "expires_in": 3600}
+            """));
+
+    String token = tokenManager.getTokenAsync().get(10, TimeUnit.SECONDS);
+    assertThat(token).isEqualTo("async-token");
+  }
+
+  @Test
+  void shouldCompleteFutureExceptionallyOnInvalidCredentials() throws Exception {
+    mockWebServer.enqueue(new MockResponse()
+        .setResponseCode(401)
+        .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+        .setBody("""
+            {"error": "invalid_client", "error_description": "Bad credentials"}
+            """));
+
+    CompletableFuture<String> future = tokenManager.getTokenAsync();
+
+    assertThat(future)
+        .failsWithin(Duration.ofSeconds(10))
+        .withThrowableOfType(ExecutionException.class)
+        .withCauseExactlyInstanceOf(InvalidCredentialsException.class);
+  }
+
+  @Test
+  void shouldGracefullyDegradeInAsyncPath() throws Exception {
+    MutableClock testClock = new MutableClock(Instant.now());
+
+    TokenConfig testConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("async-degrade-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(Duration.ofSeconds(10))
+        .clock(testClock)
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager manager = new OAuth2TokenManager(testConfig);
+
+    try {
+      // Get initial token with 60s expiry
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(200)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {"access_token": "good-token", "token_type": "Bearer", "expires_in": 60}
+              """));
+
+      manager.getToken();
+
+      // Advance into refresh threshold but before expiry (t=51, expires at t=60)
+      testClock.advance(Duration.ofSeconds(51));
+
+      // Server returns 500 — transient failure
+      mockWebServer.enqueue(new MockResponse().setResponseCode(500));
+
+      // Async path should degrade to cached token
+      String fallback = manager.getTokenAsync().get(10, TimeUnit.SECONDS);
+      assertThat(fallback).isEqualTo("good-token");
+    } finally {
+      manager.close();
+    }
+  }
+
+  @Test
+  void shouldNotGracefullyDegradeForPermanentErrorsAsync() throws Exception {
+    MutableClock testClock = new MutableClock(Instant.now());
+
+    TokenConfig testConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("async-perm-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(Duration.ofSeconds(10))
+        .clock(testClock)
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager manager = new OAuth2TokenManager(testConfig);
+
+    try {
+      // Get initial token with 60s expiry
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(200)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {"access_token": "good-token", "token_type": "Bearer", "expires_in": 60}
+              """));
+
+      manager.getToken();
+
+      // Advance into refresh threshold but before expiry
+      testClock.advance(Duration.ofSeconds(51));
+
+      // Server returns 401 — permanent failure
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(401)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {"error": "invalid_client", "error_description": "Credentials revoked"}
+              """));
+
+      // Async path should NOT degrade — permanent errors rethrow immediately
+      CompletableFuture<String> future = manager.getTokenAsync();
+      assertThat(future)
+          .failsWithin(Duration.ofSeconds(10))
+          .withThrowableOfType(ExecutionException.class)
+          .withCauseExactlyInstanceOf(InvalidCredentialsException.class);
+    } finally {
+      manager.close();
+    }
+  }
+
+  @Test
+  void shouldReturnFailedFutureWhenClosed() throws Exception {
+    tokenManager.close();
+
+    CompletableFuture<String> future = tokenManager.getTokenAsync();
+
+    assertThat(future)
+        .failsWithin(Duration.ofSeconds(1))
+        .withThrowableOfType(ExecutionException.class)
+        .withCauseExactlyInstanceOf(IllegalStateException.class);
   }
 
   private MockResponse successResponse(String tokenValue, int expiresIn) {

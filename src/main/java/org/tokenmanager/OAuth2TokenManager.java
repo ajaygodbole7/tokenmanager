@@ -24,6 +24,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -155,51 +156,59 @@ public class OAuth2TokenManager implements TokenProvider {
    * @throws ServiceUnavailableException if the service is down, circuit is open, or refresh timed out.
    */
 
-  public String getToken() {
+  @Override
+  public CompletableFuture<String> getTokenAsync() {
     if (closed) {
-      throw new IllegalStateException("TokenManager is closed");
+      return CompletableFuture.failedFuture(
+          new IllegalStateException("TokenManager is closed"));
     }
 
-    // Step 1: Possibly return cached token
     String cachedToken = returnCachedTokenIfValid();
     if (cachedToken != null) {
-      return cachedToken;
+      return CompletableFuture.completedFuture(cachedToken);
     }
 
-    // Warn once when a single-exchange grant type attempts a second refresh
-    if (!refreshWarningLogged
-        && !currentToken.tokenValue().equals("INVALID")
-        && config.getGrantType() != OAuth2GrantType.CLIENT_CREDENTIALS
-        && config.getGrantType() != OAuth2GrantType.JWT_BEARER) {
-      log.warn("Grant type {} does not support automatic refresh. "
-          + "First exchange succeeded but subsequent refreshes will replay "
-          + "the original grant parameters and likely fail. "
-          + "See README grant type caveats.", config.getGrantType());
-      refreshWarningLogged = true;
-    }
+    emitRefreshWarningIfNeeded();
 
-    try {
-      // Step 2: Check circuit breaker state now that we know token is not valid
-      checkCircuitBreaker();
-
-      // Step 3: Proceed with refresh
-      CompletableFuture<OAuth2Token> refreshOperation = refreshToken();
-
-      // Step 4: Wait for refresh and handle exceptions
-      return awaitRefreshAndHandleExceptions(refreshOperation);
-    } catch (TokenException e) {
-      // Graceful degradation for transient failures only. Permanent failures
-      // (credentials, configuration, endpoint) are rethrown immediately so they
-      // are not masked until the cached token happens to expire.
-      // Snapshot the volatile field once to avoid inconsistent reads across threads.
-      OAuth2Token cached = currentToken;
-      if ((e instanceof ServiceUnavailableException || e instanceof RateLimitedException)
-          && clock.instant().isBefore(cached.expiresAt())) {
-        log.warn("Transient refresh failure for client {}. Returning current token (expires at {}): {}",
-            config.getClientId(), cached.expiresAt(), e.getMessage());
-        return cached.tokenValue();
+    if (circuitBreaker.getState() == CircuitBreaker.State.OPEN) {
+      ServiceUnavailableException cbException = new ServiceUnavailableException(
+          "Service unavailable. Current token expires at: " + currentToken.expiresAt());
+      try {
+        return CompletableFuture.completedFuture(tryGracefulDegradation(cbException));
+      } catch (TokenException ex) {
+        return CompletableFuture.failedFuture(ex);
       }
-      throw e;
+    }
+
+    return refreshToken()
+        .thenApply(OAuth2Token::tokenValue)
+        .exceptionallyCompose(ex -> {
+          TokenException mapped = mapToTokenException(ex);
+          try {
+            return CompletableFuture.completedFuture(tryGracefulDegradation(mapped));
+          } catch (TokenException te) {
+            return CompletableFuture.failedFuture(te);
+          }
+        });
+  }
+
+  @Override
+  public String getToken() {
+    try {
+      Duration overallTimeout = computeOverallTimeout();
+      return getTokenAsync().get(overallTimeout.toMillis(), TimeUnit.MILLISECONDS);
+    } catch (ExecutionException e) {
+      Throwable cause = e.getCause();
+      if (cause instanceof TokenException te) throw te;
+      if (cause instanceof IllegalStateException ise) throw ise;
+      throw new ServiceUnavailableException("Unexpected failure", cause);
+    } catch (TimeoutException e) {
+      throw new ServiceUnavailableException("Token refresh timed out", e);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new ServiceUnavailableException("Token refresh interrupted", e);
+    } catch (CancellationException e) {
+      throw new ServiceUnavailableException("Token refresh was canceled", e);
     }
   }
 
@@ -214,51 +223,63 @@ public class OAuth2TokenManager implements TokenProvider {
   }
 
   /**
-   * Checks the circuit breaker state to determine if we can attempt a refresh.
-   * Throws an exception if the circuit breaker is open and no valid token is present.
+   * Warns once when a single-exchange grant type attempts a second refresh.
    */
-  private void checkCircuitBreaker() {
-    if (circuitBreaker.getState() == CircuitBreaker.State.OPEN) {
-      throw new ServiceUnavailableException(
-          "Service unavailable. Current token expires at: " + currentToken.expiresAt());
+  private void emitRefreshWarningIfNeeded() {
+    if (!refreshWarningLogged
+        && !currentToken.tokenValue().equals("INVALID")
+        && config.getGrantType() != OAuth2GrantType.CLIENT_CREDENTIALS
+        && config.getGrantType() != OAuth2GrantType.JWT_BEARER) {
+      log.warn("Grant type {} does not support automatic refresh. "
+          + "First exchange succeeded but subsequent refreshes will replay "
+          + "the original grant parameters and likely fail. "
+          + "See README grant type caveats.", config.getGrantType());
+      refreshWarningLogged = true;
     }
   }
 
   /**
-   * Awaits the completion of the refresh operation and maps any exceptions to appropriate runtime exceptions.
+   * Maps an exception from a CompletableFuture stage to the sealed TokenException hierarchy.
+   * Unwraps CompletionException, then classifies: TokenException passthrough,
+   * CancellationException, RuntimeException with UnknownHostException cause-chain walk,
+   * generic ServiceUnavailableException fallback.
    */
-  private String awaitRefreshAndHandleExceptions(CompletableFuture<OAuth2Token> refreshOperation) {
-    try {
-      Duration overallTimeout = computeOverallTimeout();
-      OAuth2Token newToken = refreshOperation.get(overallTimeout.toMillis(), TimeUnit.MILLISECONDS);
-      return newToken.tokenValue();
-    } catch (ExecutionException e) {
-      Throwable cause = e.getCause();
-      if (cause instanceof TokenException te) {
-        throw te;
-      }
-      // Guard against non-TokenException RuntimeExceptions (e.g. UncheckedIOException
-      // from retry exhaustion) leaking outside the sealed hierarchy.
-      // DNS failures are endpoint configuration errors, not transient.
-      if (cause instanceof RuntimeException re) {
-        for (Throwable t = re; t != null; t = t.getCause()) {
-          if (t instanceof UnknownHostException) {
-            throw new InvalidEndpointException("Token endpoint unreachable", t);
-          }
-        }
-        throw new ServiceUnavailableException("Unexpected runtime failure", re);
-      }
-      throw new ServiceUnavailableException("Service is unavailable", cause);
-    } catch (TimeoutException e) {
-      refreshOperation.cancel(true);
-      throw new ServiceUnavailableException("Token refresh timed out", e);
-    } catch (InterruptedException e) {
-      refreshOperation.cancel(true);
-      Thread.currentThread().interrupt();
-      throw new ServiceUnavailableException("Token refresh interrupted", e);
-    } catch (CancellationException e) {
-      throw new ServiceUnavailableException("Token refresh was canceled", e);
+  private TokenException mapToTokenException(Throwable ex) {
+    Throwable cause = ex;
+    if (cause instanceof CompletionException ce) {
+      cause = ce.getCause();
     }
+    if (cause instanceof TokenException te) {
+      return te;
+    }
+    if (cause instanceof CancellationException ce) {
+      return new ServiceUnavailableException("Token refresh was canceled", ce);
+    }
+    if (cause instanceof RuntimeException re) {
+      for (Throwable t = re; t != null; t = t.getCause()) {
+        if (t instanceof UnknownHostException) {
+          return new InvalidEndpointException("Token endpoint unreachable", t);
+        }
+      }
+      return new ServiceUnavailableException("Unexpected runtime failure", re);
+    }
+    return new ServiceUnavailableException("Service is unavailable", cause);
+  }
+
+  /**
+   * Attempts graceful degradation for transient failures. Returns the cached token
+   * if it is still unexpired and the failure is transient (ServiceUnavailableException
+   * or RateLimitedException). Rethrows permanent failures immediately.
+   */
+  private String tryGracefulDegradation(TokenException e) {
+    OAuth2Token cached = currentToken;
+    if ((e instanceof ServiceUnavailableException || e instanceof RateLimitedException)
+        && clock.instant().isBefore(cached.expiresAt())) {
+      log.warn("Transient refresh failure for client {}. Returning current token (expires at {}): {}",
+          config.getClientId(), cached.expiresAt(), e.getMessage());
+      return cached.tokenValue();
+    }
+    throw e;
   }
 
   /**
@@ -841,4 +862,3 @@ public class OAuth2TokenManager implements TokenProvider {
   }
 
 }
-
