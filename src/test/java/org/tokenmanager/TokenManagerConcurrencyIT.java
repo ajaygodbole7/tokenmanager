@@ -183,4 +183,56 @@ class TokenManagerConcurrencyIT {
             executor.awaitTermination(5, TimeUnit.SECONDS);
         }
     }
+
+    @Test
+    void shouldCoalesceFiftyPlusThreadsAgainstRealServer() throws Exception {
+        // 60 threads calling getToken() simultaneously all receive the same token from Keycloak
+        TokenConfig config = TokenConfig.builder()
+                .tokenEndpoint(KeycloakTestSupport.TOKEN_ENDPOINT)
+                .clientId(KeycloakTestSupport.SERVICE_CLIENT_ID)
+                .clientSecret(KeycloakTestSupport.SERVICE_CLIENT_SECRET)
+                .grantType(OAuth2GrantType.CLIENT_CREDENTIALS)
+                .httpClient(KeycloakTestSupport.HTTP_CLIENT)
+                .build();
+
+        try (var manager = new OAuth2TokenManager(config)) {
+            int threadCount = 60;
+            Set<String> tokens = ConcurrentHashMap.newKeySet();
+            List<Exception> errors = Collections.synchronizedList(new ArrayList<>());
+            CountDownLatch ready = new CountDownLatch(threadCount);
+            CountDownLatch go = new CountDownLatch(1);
+            CountDownLatch done = new CountDownLatch(threadCount);
+
+            ExecutorService executor = Executors.newFixedThreadPool(threadCount);
+            for (int i = 0; i < threadCount; i++) {
+                executor.submit(() -> {
+                    try {
+                        ready.countDown();
+                        go.await();
+                        tokens.add(manager.getToken());
+                    } catch (Exception e) {
+                        errors.add(e);
+                    } finally {
+                        done.countDown();
+                    }
+                });
+            }
+
+            assertThat(ready.await(10, TimeUnit.SECONDS))
+                    .as("All threads should be ready").isTrue();
+            go.countDown();
+
+            assertThat(done.await(60, TimeUnit.SECONDS))
+                    .as("All 60 threads should complete")
+                    .isTrue();
+
+            assertThat(errors).as("No threads should fail").isEmpty();
+            assertThat(tokens)
+                    .as("All 60 threads should receive the same token")
+                    .hasSize(1);
+
+            executor.shutdown();
+            executor.awaitTermination(10, TimeUnit.SECONDS);
+        }
+    }
 }

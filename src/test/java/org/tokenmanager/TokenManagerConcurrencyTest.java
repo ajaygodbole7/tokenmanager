@@ -1121,6 +1121,99 @@ class TokenManagerConcurrencyTest {
     assertThat(executor.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
   }
 
+  /**
+   * Tests that 50+ threads calling getToken() simultaneously coalesce into a single
+   * HTTP request and all receive the same token. This validates the library's core
+   * concurrency guarantee at realistic production-scale thread counts.
+   */
+  @Test
+  void shouldCoalesceFiftyPlusThreadsIntoSingleRefresh() throws Exception {
+    MutableClock testClock = new MutableClock(Instant.now());
+
+    TokenConfig config = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("fifty-threads-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(Duration.ofSeconds(1))
+        .clock(testClock)
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager manager = new OAuth2TokenManager(config);
+
+    try {
+      // Get initial short-lived token
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(200)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {"access_token": "initial", "token_type": "Bearer", "expires_in": 5}
+              """));
+
+      manager.getToken();
+
+      // Advance clock past expiry to force refresh
+      testClock.advance(Duration.ofSeconds(6));
+
+      // Enqueue a single refresh response with body delay to maximize contention
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(200)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBodyDelay(500, TimeUnit.MILLISECONDS)
+          .setBody("""
+              {"access_token": "coalesced-token", "token_type": "Bearer", "expires_in": 3600}
+              """));
+
+      int threadCount = 60;
+      Set<String> tokens = ConcurrentHashMap.newKeySet();
+      List<Exception> errors = Collections.synchronizedList(new ArrayList<>());
+      CountDownLatch ready = new CountDownLatch(threadCount);
+      CountDownLatch go = new CountDownLatch(1);
+      CountDownLatch done = new CountDownLatch(threadCount);
+
+      ExecutorService executor = Executors.newFixedThreadPool(threadCount);
+      for (int i = 0; i < threadCount; i++) {
+        executor.submit(() -> {
+          try {
+            ready.countDown();
+            go.await();
+            tokens.add(manager.getToken());
+          } catch (Exception e) {
+            errors.add(e);
+          } finally {
+            done.countDown();
+          }
+        });
+      }
+
+      // Wait for all threads to be ready, then release simultaneously
+      assertThat(ready.await(10, TimeUnit.SECONDS))
+          .as("All threads should be ready").isTrue();
+      go.countDown();
+
+      assertThat(done.await(30, TimeUnit.SECONDS))
+          .as("All 60 threads should complete within timeout").isTrue();
+
+      assertThat(errors).as("No threads should fail").isEmpty();
+
+      assertThat(tokens)
+          .as("All 60 threads should receive the same coalesced token")
+          .hasSize(1)
+          .containsExactly("coalesced-token");
+
+      // Initial fetch + single coalesced refresh = exactly 2 requests
+      assertThat(mockWebServer.getRequestCount())
+          .as("Should make exactly 2 requests despite 60 threads")
+          .isEqualTo(2);
+
+      executor.shutdown();
+      assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+    } finally {
+      manager.close();
+    }
+  }
+
 }
 
 
