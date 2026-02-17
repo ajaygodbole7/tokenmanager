@@ -1025,6 +1025,101 @@ class TokenManagerConcurrencyTest {
     shortTimeoutClient.connectionPool().evictAll();
   }
 
+  /**
+   * Tests that close() racing with getToken() never leaks RejectedExecutionException.
+   * Threads calling getToken() after executor shutdown get either a token,
+   * ServiceUnavailableException, or IllegalStateException — never a raw REE.
+   */
+  @Test
+  void shouldHandleCloseRaceDuringRefresh() throws Exception {
+    MutableClock testClock = new MutableClock(Instant.now());
+
+    TokenConfig raceConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("close-race-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(REFRESH_THRESHOLD)
+        .clock(testClock)
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager raceManager = new OAuth2TokenManager(raceConfig);
+
+    // Get a short-lived token so subsequent calls trigger refresh
+    mockWebServer.enqueue(new MockResponse()
+        .setResponseCode(200)
+        .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+        .setBody("""
+            {"access_token": "initial", "token_type": "Bearer", "expires_in": 1}
+            """));
+
+    raceManager.getToken();
+    testClock.advance(Duration.ofSeconds(2));
+
+    // Enqueue enough responses for concurrent attempts
+    for (int i = 0; i < 20; i++) {
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(200)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {"access_token": "refreshed", "token_type": "Bearer", "expires_in": 3600}
+              """));
+    }
+
+    int threadCount = 10;
+    List<Exception> exceptions = Collections.synchronizedList(new ArrayList<>());
+    CountDownLatch startGate = new CountDownLatch(1);
+    CountDownLatch done = new CountDownLatch(threadCount + 1);
+
+    ExecutorService executor = Executors.newFixedThreadPool(threadCount + 1);
+
+    // Launch getToken() threads that wait for the start signal
+    for (int i = 0; i < threadCount; i++) {
+      executor.submit(() -> {
+        try {
+          startGate.await();
+          raceManager.getToken();
+        } catch (Exception e) {
+          exceptions.add(e);
+        } finally {
+          done.countDown();
+        }
+      });
+    }
+
+    // Launch close() thread
+    executor.submit(() -> {
+      try {
+        startGate.await();
+        raceManager.close();
+      } catch (Exception e) {
+        exceptions.add(e);
+      } finally {
+        done.countDown();
+      }
+    });
+
+    // Release all threads simultaneously to maximize race probability
+    startGate.countDown();
+    boolean completed = done.await(10, TimeUnit.SECONDS);
+    assertThat(completed).as("All threads should complete").isTrue();
+
+    // No RejectedExecutionException should escape
+    for (Exception e : exceptions) {
+      assertThat(e)
+          .as("Should never see RejectedExecutionException")
+          .isNotInstanceOf(java.util.concurrent.RejectedExecutionException.class);
+      assertThat(e)
+          .isInstanceOfAny(
+              ServiceUnavailableException.class,
+              IllegalStateException.class,
+              CancellationException.class);
+    }
+
+    executor.shutdown();
+    assertThat(executor.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+  }
 
 }
 

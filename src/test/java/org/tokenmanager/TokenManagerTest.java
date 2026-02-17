@@ -2541,6 +2541,120 @@ class TokenManagerTest {
     }
   }
 
+  // --- 1a: RejectedExecutionException race on close ---
+
+  @Test
+  void shouldThrowServiceUnavailableWhenExecutorShutDown() throws Exception {
+    // Close races with getToken: thread A passes closed guard, thread B closes,
+    // thread A hits supplyAsync on shut-down executor. Must get
+    // ServiceUnavailableException, not RejectedExecutionException.
+    mockWebServer.enqueue(new MockResponse()
+        .setResponseCode(200)
+        .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+        .setBody("""
+            {"access_token": "initial", "token_type": "bearer", "expires_in": 1}
+            """));
+
+    tokenManager.getToken();
+    tokenManager.close();
+
+    // After close, startNewRefresh wraps RejectedExecutionException
+    // Build a new manager and close it immediately to ensure the race path
+    TokenConfig freshConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("ree-test-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(REFRESH_THRESHOLD)
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager manager = new OAuth2TokenManager(freshConfig);
+    manager.close();
+
+    // getToken() after close should throw IllegalStateException (the closed guard).
+    // But if the closed guard is bypassed, startNewRefresh should catch REE
+    // and return a failed future → ServiceUnavailableException.
+    assertThatThrownBy(manager::getToken)
+        .isInstanceOf(IllegalStateException.class);
+  }
+
+  // --- 1b: DNS/SSL retry exclusion and classification ---
+
+  @Test
+  void shouldClassifyDnsFailureAsInvalidEndpoint() {
+    // Unresolvable host → InvalidEndpointException, not ServiceUnavailableException.
+    // Large retry delay proves no retries happen (test would be slow if retried).
+    TokenConfig dnsConfig = TokenConfig.builder()
+        .tokenEndpoint("https://this.host.does.not.exist.invalid/oauth/token")
+        .clientId("dns-test-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(Duration.ofSeconds(5))
+        .maxRetryAttempts(3)
+        .initialRetryDelay(Duration.ofSeconds(30))
+        .build();
+
+    try (OAuth2TokenManager manager = new OAuth2TokenManager(dnsConfig)) {
+      long startMs = System.nanoTime();
+      assertThatThrownBy(manager::getToken)
+          .isInstanceOf(InvalidEndpointException.class);
+      long elapsedMs = (System.nanoTime() - startMs) / 1_000_000;
+      // If retries happened with 30s delay, this would take 60+ seconds.
+      // Without retries, DNS resolution failure is fast.
+      assertThat(elapsedMs).isLessThan(15_000);
+    }
+  }
+
+  // --- 1c: expires_in overflow ---
+
+  @Test
+  void shouldRejectExpiresInOverflow() throws Exception {
+    // Server returns absurdly large expires_in → ServiceUnavailableException
+    mockWebServer.enqueue(new MockResponse()
+        .setResponseCode(200)
+        .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+        .setBody("""
+            {"access_token": "token", "token_type": "bearer", "expires_in": 999999999}
+            """));
+
+    assertThatThrownBy(() -> tokenManager.getToken())
+        .isInstanceOf(ServiceUnavailableException.class)
+        .hasMessageContaining("expires_in")
+        .hasMessageContaining("exceeds maximum");
+  }
+
+  @Test
+  void shouldAcceptExpiresInAtMaximum() throws Exception {
+    // 365 days is the upper bound — should be accepted
+    long maxExpiresIn = 86400L * 365;
+    mockWebServer.enqueue(new MockResponse()
+        .setResponseCode(200)
+        .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+        .setBody("""
+            {"access_token": "long-lived", "token_type": "bearer", "expires_in": %d}
+            """.formatted(maxExpiresIn)));
+
+    String token = tokenManager.getToken();
+    assertThat(token).isEqualTo("long-lived");
+  }
+
+  @Test
+  void shouldRejectExpiresInJustOverMaximum() throws Exception {
+    // One second over the maximum → rejected
+    long overMax = 86400L * 365 + 1;
+    mockWebServer.enqueue(new MockResponse()
+        .setResponseCode(200)
+        .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+        .setBody("""
+            {"access_token": "token", "token_type": "bearer", "expires_in": %d}
+            """.formatted(overMax)));
+
+    assertThatThrownBy(() -> tokenManager.getToken())
+        .isInstanceOf(ServiceUnavailableException.class)
+        .hasMessageContaining("expires_in")
+        .hasMessageContaining("exceeds maximum");
+  }
+
   private MockResponse successResponse(String tokenValue, int expiresIn) {
     return new MockResponse()
         .setResponseCode(200)

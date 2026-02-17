@@ -15,6 +15,7 @@ import io.github.resilience4j.retry.RetryConfig;
 import io.github.resilience4j.retry.RetryRegistry;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
@@ -26,6 +27,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.locks.ReentrantLock;
@@ -65,6 +67,7 @@ public class OAuth2TokenManager implements AutoCloseable {
   private static final Duration DEFAULT_REFRESH_THRESHOLD = Duration.ofSeconds(30);
   private static final int FAILURE_THRESHOLD = 100;
   private static final int HALF_OPEN_CALLS = 1;
+  private static final long MAX_EXPIRES_IN = 86400L * 365;
 
   private final TokenConfig config;
   private final Clock clock;
@@ -219,7 +222,13 @@ public class OAuth2TokenManager implements AutoCloseable {
       }
       // Guard against non-TokenException RuntimeExceptions (e.g. UncheckedIOException
       // from retry exhaustion) leaking outside the sealed hierarchy.
+      // DNS failures are endpoint configuration errors, not transient.
       if (cause instanceof RuntimeException re) {
+        for (Throwable t = re; t != null; t = t.getCause()) {
+          if (t instanceof UnknownHostException) {
+            throw new InvalidEndpointException("Token endpoint unreachable", t);
+          }
+        }
         throw new ServiceUnavailableException("Unexpected runtime failure", re);
       }
       throw new ServiceUnavailableException("Service is unavailable", cause);
@@ -315,19 +324,24 @@ public class OAuth2TokenManager implements AutoCloseable {
    * @return A CompletableFuture containing the new OAuth2Token or throwing the appropriate exception on failure.
    */
   private CompletableFuture<OAuth2Token> startNewRefresh() {
-    return CompletableFuture.supplyAsync(() -> {
-      return Decorators.ofSupplier(() -> {
-            try {
-              return requestNewToken();
-            } catch (IOException e) {
-              throw new UncheckedIOException(e);
-            }
-          })
-          .withRetry(retry)
-          .withCircuitBreaker(circuitBreaker)
-          .decorate()
-          .get();
-    }, executor);
+    try {
+      return CompletableFuture.supplyAsync(() -> {
+        return Decorators.ofSupplier(() -> {
+              try {
+                return requestNewToken();
+              } catch (IOException e) {
+                throw new UncheckedIOException(e);
+              }
+            })
+            .withRetry(retry)
+            .withCircuitBreaker(circuitBreaker)
+            .decorate()
+            .get();
+      }, executor);
+    } catch (RejectedExecutionException e) {
+      return CompletableFuture.failedFuture(
+          new ServiceUnavailableException("Token manager is closed", e));
+    }
   }
 
   /**
@@ -599,6 +613,12 @@ public class OAuth2TokenManager implements AutoCloseable {
       throw new ServiceUnavailableException(
           "Invalid expires_in value: " + expiresIn + " (must be positive)");
     }
+    if (expiresIn > MAX_EXPIRES_IN) {
+      log.error("Token response has unreasonably large 'expires_in' ({}) for client {}",
+          expiresIn, config.getClientId());
+      throw new ServiceUnavailableException(
+          "Invalid expires_in value: " + expiresIn + " (exceeds maximum of " + MAX_EXPIRES_IN + ")");
+    }
   }
 
   /**
@@ -667,7 +687,17 @@ public class OAuth2TokenManager implements AutoCloseable {
         RetryConfig.<OAuth2Token>custom()
             .maxAttempts(config.getMaxRetryAttempts())
             .intervalFunction(intervalFunction)
-            .retryOnException(e -> e instanceof UncheckedIOException)
+            .retryOnException(e -> {
+              if (e instanceof UncheckedIOException) {
+                for (Throwable t = e; t != null; t = t.getCause()) {
+                  if (t instanceof UnknownHostException) {
+                    return false;
+                  }
+                }
+                return true;
+              }
+              return false;
+            })
             .build();
 
     RetryRegistry registry = RetryRegistry.of(retryConfig);
