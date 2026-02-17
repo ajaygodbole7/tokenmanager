@@ -6,9 +6,29 @@ import java.util.Map;
 
 public enum OAuth2GrantType {
   CLIENT_CREDENTIALS("client_credentials"),
+
+  /**
+   * Resource Owner Password Credentials (ROPC) grant. This is a single-exchange grant type:
+   * the initial token request succeeds, but subsequent refreshes replay the same username
+   * and password. Use {@code CLIENT_CREDENTIALS} or {@code JWT_BEARER} for long-lived
+   * machine-to-machine token management.
+   */
   PASSWORD("password"),
+
+  /**
+   * Authorization Code grant. This is a single-exchange grant type: authorization codes
+   * are single-use and cannot be replayed. Subsequent refresh attempts will fail because
+   * the original code has already been consumed by the authorization server.
+   */
   AUTHORIZATION_CODE("authorization_code"),
+
+  /**
+   * Refresh Token grant. This is a single-exchange grant type: refresh tokens may be
+   * rotated by the authorization server on each use, making the original token invalid
+   * for subsequent requests.
+   */
   REFRESH_TOKEN("refresh_token"),
+
   IMPLICIT("implicit"),
   JWT_BEARER("urn:ietf:params:oauth:grant-type:jwt-bearer");
 

@@ -2655,6 +2655,279 @@ class TokenManagerTest {
         .hasMessageContaining("exceeds maximum");
   }
 
+  // --- Supplier tests (2a) ---
+
+  @Test
+  void shouldCallClientSecretSupplierOnEachRefresh() throws Exception {
+    // Counter supplier returns "secret-0", "secret-1", etc.
+    java.util.concurrent.atomic.AtomicInteger counter = new java.util.concurrent.atomic.AtomicInteger();
+    MutableClock testClock = new MutableClock(Instant.now());
+
+    TokenConfig supplierConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("supplier-test-" + UUID.randomUUID())
+        .clientSecretSupplier(() -> "secret-" + counter.getAndIncrement())
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(Duration.ofSeconds(1))
+        .clock(testClock)
+        .httpClient(httpClient)
+        .build();
+
+    try (OAuth2TokenManager manager = new OAuth2TokenManager(supplierConfig)) {
+      // First token fetch
+      mockWebServer.enqueue(successResponse("token-1", 5));
+      manager.getToken();
+
+      RecordedRequest req1 = mockWebServer.takeRequest();
+      assertThat(req1.getBody().readUtf8()).contains("client_secret=secret-0");
+
+      // Advance clock past refresh threshold to force a second fetch
+      testClock.advance(Duration.ofSeconds(5));
+      mockWebServer.enqueue(successResponse("token-2", 3600));
+      manager.getToken();
+
+      RecordedRequest req2 = mockWebServer.takeRequest();
+      assertThat(req2.getBody().readUtf8()).contains("client_secret=secret-1");
+    }
+  }
+
+  @Test
+  void shouldCallAssertionSupplierOnEachRefresh() throws Exception {
+    // Counter supplier returns "assertion-0", "assertion-1", etc.
+    java.util.concurrent.atomic.AtomicInteger counter = new java.util.concurrent.atomic.AtomicInteger();
+    MutableClock testClock = new MutableClock(Instant.now());
+
+    TokenConfig supplierConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("assertion-supplier-" + UUID.randomUUID())
+        .clientSecretSupplier(() -> "secret")
+        .grantType(OAuth2GrantType.JWT_BEARER)
+        .assertionSupplier(() -> "assertion-" + counter.getAndIncrement())
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(Duration.ofSeconds(1))
+        .clock(testClock)
+        .httpClient(httpClient)
+        .build();
+
+    try (OAuth2TokenManager manager = new OAuth2TokenManager(supplierConfig)) {
+      mockWebServer.enqueue(successResponse("jwt-token-1", 5));
+      manager.getToken();
+
+      RecordedRequest req1 = mockWebServer.takeRequest();
+      assertThat(req1.getBody().readUtf8()).contains("assertion=assertion-0");
+
+      testClock.advance(Duration.ofSeconds(5));
+      mockWebServer.enqueue(successResponse("jwt-token-2", 3600));
+      manager.getToken();
+
+      RecordedRequest req2 = mockWebServer.takeRequest();
+      assertThat(req2.getBody().readUtf8()).contains("assertion=assertion-1");
+    }
+  }
+
+  @Test
+  void shouldCallClientSecretSupplierForBasicAuth() throws Exception {
+    // Counter supplier returns fresh secrets for BASIC auth header
+    java.util.concurrent.atomic.AtomicInteger counter = new java.util.concurrent.atomic.AtomicInteger();
+    MutableClock testClock = new MutableClock(Instant.now());
+
+    TokenConfig basicConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("basic-supplier-" + UUID.randomUUID())
+        .clientSecretSupplier(() -> "secret-" + counter.getAndIncrement())
+        .clientAuthMethod(ClientAuthMethod.CLIENT_SECRET_BASIC)
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(Duration.ofSeconds(1))
+        .clock(testClock)
+        .httpClient(httpClient)
+        .build();
+
+    try (OAuth2TokenManager manager = new OAuth2TokenManager(basicConfig)) {
+      mockWebServer.enqueue(successResponse("basic-token-1", 5));
+      manager.getToken();
+
+      RecordedRequest req1 = mockWebServer.takeRequest();
+      String auth1 = req1.getHeader("Authorization");
+      String decoded1 = new String(
+          java.util.Base64.getDecoder().decode(auth1.substring(6)),
+          java.nio.charset.StandardCharsets.UTF_8);
+      assertThat(decoded1).endsWith(":secret-0");
+
+      testClock.advance(Duration.ofSeconds(5));
+      mockWebServer.enqueue(successResponse("basic-token-2", 3600));
+      manager.getToken();
+
+      RecordedRequest req2 = mockWebServer.takeRequest();
+      String auth2 = req2.getHeader("Authorization");
+      String decoded2 = new String(
+          java.util.Base64.getDecoder().decode(auth2.substring(6)),
+          java.nio.charset.StandardCharsets.UTF_8);
+      assertThat(decoded2).endsWith(":secret-1");
+    }
+  }
+
+  @Test
+  void shouldWorkWithStaticClientSecret() throws Exception {
+    // Backward compat: clientSecret(String) still works
+    TokenConfig staticConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("static-secret-" + UUID.randomUUID())
+        .clientSecret("static-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(REFRESH_THRESHOLD)
+        .httpClient(httpClient)
+        .build();
+
+    try (OAuth2TokenManager manager = new OAuth2TokenManager(staticConfig)) {
+      mockWebServer.enqueue(successResponse("static-token", 3600));
+      String token = manager.getToken();
+      assertThat(token).isEqualTo("static-token");
+
+      RecordedRequest req = mockWebServer.takeRequest();
+      assertThat(req.getBody().readUtf8()).contains("client_secret=static-secret");
+    }
+  }
+
+  @Test
+  void shouldWorkWithStaticAssertion() throws Exception {
+    // Backward compat: assertion(String) still works
+    TokenConfig staticConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("static-assertion-" + UUID.randomUUID())
+        .clientSecret("secret")
+        .grantType(OAuth2GrantType.JWT_BEARER)
+        .assertion("static-assertion-value")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(REFRESH_THRESHOLD)
+        .httpClient(httpClient)
+        .build();
+
+    try (OAuth2TokenManager manager = new OAuth2TokenManager(staticConfig)) {
+      mockWebServer.enqueue(successResponse("jwt-static-token", 3600));
+      String token = manager.getToken();
+      assertThat(token).isEqualTo("jwt-static-token");
+
+      RecordedRequest req = mockWebServer.takeRequest();
+      assertThat(req.getBody().readUtf8()).contains("assertion=static-assertion-value");
+    }
+  }
+
+  @Test
+  void shouldNotCallSupplierInToString() {
+    // Supplier that throws if called — toString must not invoke it
+    java.util.function.Supplier<String> throwingSupplier = () -> {
+      throw new RuntimeException("Supplier should not be called in toString");
+    };
+
+    TokenConfig config = TokenConfig.builder()
+        .tokenEndpoint("https://auth.example.com/token")
+        .clientId("tostring-test")
+        .clientSecretSupplier(throwingSupplier)
+        .build();
+
+    org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> config.toString());
+  }
+
+  // --- Refresh warning tests (2b) ---
+
+  @Test
+  void shouldLogWarningOnNonCCRefresh() throws Exception {
+    // PASSWORD grant: warning fires on second refresh
+    MutableClock testClock = new MutableClock(Instant.now());
+
+    TokenConfig passwordConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("warn-password-" + UUID.randomUUID())
+        .clientSecret("secret")
+        .grantType(OAuth2GrantType.PASSWORD)
+        .username("user")
+        .password("pass")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(Duration.ofSeconds(1))
+        .clock(testClock)
+        .httpClient(httpClient)
+        .build();
+
+    try (OAuth2TokenManager manager = new OAuth2TokenManager(passwordConfig)) {
+      // First fetch — no warning (currentToken is INVALID sentinel)
+      mockWebServer.enqueue(successResponse("pwd-token-1", 5));
+      manager.getToken();
+      assertThat(manager.isRefreshWarningLogged()).isFalse();
+
+      // Advance past expiry to force refresh
+      testClock.advance(Duration.ofSeconds(6));
+      mockWebServer.enqueue(successResponse("pwd-token-2", 3600));
+      manager.getToken();
+
+      assertThat(manager.isRefreshWarningLogged()).isTrue();
+    }
+  }
+
+  @Test
+  void shouldNotLogWarningForClientCredentials() throws Exception {
+    // CC grant: no warning even after refresh
+    MutableClock testClock = new MutableClock(Instant.now());
+
+    TokenConfig ccConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("warn-cc-" + UUID.randomUUID())
+        .clientSecret("secret")
+        .grantType(OAuth2GrantType.CLIENT_CREDENTIALS)
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(Duration.ofSeconds(1))
+        .clock(testClock)
+        .httpClient(httpClient)
+        .build();
+
+    try (OAuth2TokenManager manager = new OAuth2TokenManager(ccConfig)) {
+      mockWebServer.enqueue(successResponse("cc-token-1", 5));
+      manager.getToken();
+
+      testClock.advance(Duration.ofSeconds(6));
+      mockWebServer.enqueue(successResponse("cc-token-2", 3600));
+      manager.getToken();
+
+      assertThat(manager.isRefreshWarningLogged()).isFalse();
+    }
+  }
+
+  @Test
+  void shouldLogWarningOnlyOnce() throws Exception {
+    // PASSWORD grant: flag stays true after multiple refreshes (logged once)
+    MutableClock testClock = new MutableClock(Instant.now());
+
+    TokenConfig passwordConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("warn-once-" + UUID.randomUUID())
+        .clientSecret("secret")
+        .grantType(OAuth2GrantType.PASSWORD)
+        .username("user")
+        .password("pass")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(Duration.ofSeconds(1))
+        .clock(testClock)
+        .httpClient(httpClient)
+        .build();
+
+    try (OAuth2TokenManager manager = new OAuth2TokenManager(passwordConfig)) {
+      // First fetch
+      mockWebServer.enqueue(successResponse("once-token-1", 5));
+      manager.getToken();
+
+      // Second fetch — triggers warning
+      testClock.advance(Duration.ofSeconds(6));
+      mockWebServer.enqueue(successResponse("once-token-2", 5));
+      manager.getToken();
+      assertThat(manager.isRefreshWarningLogged()).isTrue();
+
+      // Third fetch — warning already logged, flag stays true
+      testClock.advance(Duration.ofSeconds(6));
+      mockWebServer.enqueue(successResponse("once-token-3", 3600));
+      manager.getToken();
+      assertThat(manager.isRefreshWarningLogged()).isTrue();
+    }
+  }
+
   private MockResponse successResponse(String tokenValue, int expiresIn) {
     return new MockResponse()
         .setResponseCode(200)

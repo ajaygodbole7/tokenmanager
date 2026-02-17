@@ -86,6 +86,7 @@ public class OAuth2TokenManager implements AutoCloseable {
   // Current valid or soon-to-be-refreshed token
   private volatile OAuth2Token currentToken;
   private volatile boolean closed;
+  private volatile boolean refreshWarningLogged = false;
   /**
    * Represents the ongoing token refresh operation.
    * If null, no refresh is in progress. If non-null, all callers should wait on this future.
@@ -159,6 +160,18 @@ public class OAuth2TokenManager implements AutoCloseable {
     String cachedToken = returnCachedTokenIfValid();
     if (cachedToken != null) {
       return cachedToken;
+    }
+
+    // Warn once when a single-exchange grant type attempts a second refresh
+    if (!refreshWarningLogged
+        && !currentToken.tokenValue().equals("INVALID")
+        && config.getGrantType() != OAuth2GrantType.CLIENT_CREDENTIALS
+        && config.getGrantType() != OAuth2GrantType.JWT_BEARER) {
+      log.warn("Grant type {} does not support automatic refresh. "
+          + "First exchange succeeded but subsequent refreshes will replay "
+          + "the original grant parameters and likely fail. "
+          + "See README grant type caveats.", config.getGrantType());
+      refreshWarningLogged = true;
     }
 
     try {
@@ -816,6 +829,11 @@ public class OAuth2TokenManager implements AutoCloseable {
       httpClient.dispatcher().executorService().shutdown();
       httpClient.connectionPool().evictAll();
     }
+  }
+
+  /** Package-private accessor for testing the one-time refresh warning. */
+  boolean isRefreshWarningLogged() {
+    return refreshWarningLogged;
   }
 
 }
