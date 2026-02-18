@@ -44,6 +44,12 @@ public class TokenConfig {
 
   @Default int maxRetryAttempts = 3;
   @NonNull @Default Duration initialRetryDelay = Duration.ofSeconds(1);
+  /**
+   * Minimum number of calls before the circuit breaker evaluates the failure rate.
+   * The failure rate threshold is fixed at 100%, so the circuit breaker opens
+   * after {@code circuitBreakerMinimumCalls} consecutive failures (i.e., every call
+   * in the sliding window must fail).
+   */
   @Default int circuitBreakerMinimumCalls = 3;
   @NonNull @Default Duration circuitBreakerWaitDuration = Duration.ofSeconds(60);
 

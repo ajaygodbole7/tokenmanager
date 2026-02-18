@@ -265,6 +265,7 @@ class TokenManagerConcurrencyTest {
 
     int threadCount = 5;
     List<Exception> exceptions = Collections.synchronizedList(new ArrayList<>());
+    CountDownLatch completionLatch = new CountDownLatch(threadCount);
     ExecutorService executor = Executors.newFixedThreadPool(threadCount);
 
     // When
@@ -274,6 +275,8 @@ class TokenManagerConcurrencyTest {
           tokenManager.getToken();
         } catch (Exception e) {
           exceptions.add(e);
+        } finally {
+          completionLatch.countDown();
         }
       });
     }
@@ -284,6 +287,10 @@ class TokenManagerConcurrencyTest {
 
     // Shutdown token manager while request is in-flight
     tokenManager.close();
+
+    // Wait for all test threads to finish before asserting
+    boolean allCompleted = completionLatch.await(10, TimeUnit.SECONDS);
+    assertThat(allCompleted).as("All test threads should complete").isTrue();
 
     // Then
     assertThat(exceptions)

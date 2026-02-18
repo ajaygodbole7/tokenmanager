@@ -2,6 +2,7 @@ package org.tokenmanager;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker.Metrics;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker.State;
@@ -117,7 +118,13 @@ public class OAuth2TokenManager implements TokenProvider {
     this.currentToken = null;
 
     if (config.isEagerFetch()) {
-      refreshToken();
+      try {
+        refreshToken().join();
+      } catch (CompletionException ex) {
+        Throwable cause = ex.getCause();
+        if (cause instanceof TokenException te) throw te;
+        throw new ServiceUnavailableException("Eager token fetch failed", cause);
+      }
     }
   }
 
@@ -257,6 +264,9 @@ public class OAuth2TokenManager implements TokenProvider {
     }
     if (cause instanceof CancellationException ce) {
       return new ServiceUnavailableException("Token refresh was canceled", ce);
+    }
+    if (cause instanceof CallNotPermittedException cnpe) {
+      return new ServiceUnavailableException("Circuit breaker is open", cnpe);
     }
     if (cause instanceof RuntimeException re) {
       for (Throwable t = re; t != null; t = t.getCause()) {
@@ -528,14 +538,15 @@ public class OAuth2TokenManager implements TokenProvider {
         : errorCode.toString();
 
     switch (errorCode) {
-      case INVALID_CLIENT, INVALID_GRANT, UNAUTHORIZED_CLIENT ->
+      case INVALID_CLIENT, INVALID_GRANT, UNAUTHORIZED_CLIENT,
+           ACCESS_DENIED, INVALID_TOKEN ->
           throw new InvalidCredentialsException(errorDescription);
-      case INVALID_REQUEST, INVALID_SCOPE, UNSUPPORTED_GRANT_TYPE ->
+      case INVALID_REQUEST, INVALID_SCOPE, UNSUPPORTED_GRANT_TYPE,
+           INSUFFICIENT_SCOPE, INVALID_REDIRECT_URI,
+           UNSUPPORTED_RESPONSE_TYPE, UNSUPPORTED_TOKEN_TYPE ->
           throw new InvalidConfigurationException(errorDescription);
       case SERVER_ERROR, TEMPORARILY_UNAVAILABLE ->
           throw new ServiceUnavailableException(errorDescription);
-      default ->
-          throw new ServiceUnavailableException("OAuth2 error: " + errorDescription);
     }
   }
 

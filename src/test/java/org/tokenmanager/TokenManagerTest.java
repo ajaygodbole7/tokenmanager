@@ -696,6 +696,90 @@ class TokenManagerTest {
         .isInstanceOf(ServiceUnavailableException.class);
   }
 
+  @Test
+  void shouldClassifyAccessDeniedAsInvalidCredentials() {
+    mockWebServer.enqueue(new MockResponse()
+        .setResponseCode(403)
+        .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+        .setBody("""
+            {"error": "access_denied", "error_description": "Resource owner denied the request"}
+            """));
+
+    assertThatThrownBy(() -> tokenManager.getToken())
+        .isInstanceOf(InvalidCredentialsException.class)
+        .hasMessageContaining("Resource owner denied the request");
+  }
+
+  @Test
+  void shouldClassifyInvalidTokenAsInvalidCredentials() {
+    mockWebServer.enqueue(new MockResponse()
+        .setResponseCode(401)
+        .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+        .setBody("""
+            {"error": "invalid_token", "error_description": "Token has been revoked"}
+            """));
+
+    assertThatThrownBy(() -> tokenManager.getToken())
+        .isInstanceOf(InvalidCredentialsException.class)
+        .hasMessageContaining("Token has been revoked");
+  }
+
+  @Test
+  void shouldClassifyInsufficientScopeAsInvalidConfiguration() {
+    mockWebServer.enqueue(new MockResponse()
+        .setResponseCode(403)
+        .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+        .setBody("""
+            {"error": "insufficient_scope", "error_description": "Token lacks required scope"}
+            """));
+
+    assertThatThrownBy(() -> tokenManager.getToken())
+        .isInstanceOf(InvalidConfigurationException.class)
+        .hasMessageContaining("Token lacks required scope");
+  }
+
+  @Test
+  void shouldClassifyUnsupportedResponseTypeAsInvalidConfiguration() {
+    mockWebServer.enqueue(new MockResponse()
+        .setResponseCode(400)
+        .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+        .setBody("""
+            {"error": "unsupported_response_type", "error_description": "Response type not supported"}
+            """));
+
+    assertThatThrownBy(() -> tokenManager.getToken())
+        .isInstanceOf(InvalidConfigurationException.class)
+        .hasMessageContaining("Response type not supported");
+  }
+
+  @Test
+  void shouldClassifyUnsupportedTokenTypeAsInvalidConfiguration() {
+    mockWebServer.enqueue(new MockResponse()
+        .setResponseCode(400)
+        .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+        .setBody("""
+            {"error": "unsupported_token_type", "error_description": "Token type not supported"}
+            """));
+
+    assertThatThrownBy(() -> tokenManager.getToken())
+        .isInstanceOf(InvalidConfigurationException.class)
+        .hasMessageContaining("Token type not supported");
+  }
+
+  @Test
+  void shouldClassifyInvalidRedirectUriAsInvalidConfiguration() {
+    mockWebServer.enqueue(new MockResponse()
+        .setResponseCode(400)
+        .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+        .setBody("""
+            {"error": "invalid_redirect_uri", "error_description": "Redirect URI mismatch"}
+            """));
+
+    assertThatThrownBy(() -> tokenManager.getToken())
+        .isInstanceOf(InvalidConfigurationException.class)
+        .hasMessageContaining("Redirect URI mismatch");
+  }
+
   // --- TokenConfig.validate() tests ---
 
   @Test
@@ -2933,11 +3017,10 @@ class TokenManagerTest {
 
   @Test
   void shouldEagerFetchTokenOnConstruction() throws Exception {
-    // eagerFetch triggers async warm-up; first getToken() returns without a second HTTP call
+    // eagerFetch blocks in constructor; first getToken() returns without a second HTTP call
     mockWebServer.enqueue(new MockResponse()
         .setResponseCode(200)
         .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
-        .setBodyDelay(200, TimeUnit.MILLISECONDS)
         .setBody("""
             {"access_token": "eager-token", "token_type": "Bearer", "expires_in": 3600}
             """));
@@ -2953,9 +3036,6 @@ class TokenManagerTest {
         .build();
 
     try (OAuth2TokenManager manager = new OAuth2TokenManager(eagerConfig)) {
-      // Wait for warm-up to complete
-      Thread.sleep(500);
-
       String token = manager.getToken();
       assertThat(token).isEqualTo("eager-token");
       assertThat(mockWebServer.getRequestCount()).isEqualTo(1);
@@ -2963,19 +3043,18 @@ class TokenManagerTest {
   }
 
   @Test
-  void shouldCoalesceFirstGetTokenWithEagerFetch() throws Exception {
-    // getToken() called immediately after construction coalesces onto the warm-up future
+  void shouldReturnEagerFetchedTokenOnFirstGetToken() throws Exception {
+    // eagerFetch blocks in constructor, so getToken() returns cached token immediately
     mockWebServer.enqueue(new MockResponse()
         .setResponseCode(200)
         .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
-        .setBodyDelay(500, TimeUnit.MILLISECONDS)
         .setBody("""
-            {"access_token": "coalesced-eager", "token_type": "Bearer", "expires_in": 3600}
+            {"access_token": "eager-cached", "token_type": "Bearer", "expires_in": 3600}
             """));
 
     TokenConfig eagerConfig = TokenConfig.builder()
         .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
-        .clientId("coalesce-eager-" + UUID.randomUUID())
+        .clientId("eager-cached-" + UUID.randomUUID())
         .clientSecret("test-secret")
         .httpTimeout(HTTP_TIMEOUT)
         .refreshThreshold(REFRESH_THRESHOLD)
@@ -2984,9 +3063,8 @@ class TokenManagerTest {
         .build();
 
     try (OAuth2TokenManager manager = new OAuth2TokenManager(eagerConfig)) {
-      // Call getToken() immediately — coalesces onto warm-up
       String token = manager.getToken();
-      assertThat(token).isEqualTo("coalesced-eager");
+      assertThat(token).isEqualTo("eager-cached");
       assertThat(mockWebServer.getRequestCount()).isEqualTo(1);
     }
   }
@@ -3019,6 +3097,50 @@ class TokenManagerTest {
       assertThat(token).isEqualTo("lazy-token");
       assertThat(mockWebServer.getRequestCount()).isEqualTo(1);
     }
+  }
+
+  @Test
+  void shouldThrowOnEagerFetchWithBadCredentials() {
+    mockWebServer.enqueue(new MockResponse()
+        .setResponseCode(401)
+        .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+        .setBody("""
+            {"error": "invalid_client", "error_description": "Bad client credentials"}
+            """));
+
+    TokenConfig eagerConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("eager-bad-creds-" + UUID.randomUUID())
+        .clientSecret("wrong-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(REFRESH_THRESHOLD)
+        .httpClient(httpClient)
+        .eagerFetch(true)
+        .build();
+
+    assertThatThrownBy(() -> new OAuth2TokenManager(eagerConfig))
+        .isInstanceOf(InvalidCredentialsException.class)
+        .hasMessageContaining("Bad client credentials");
+  }
+
+  @Test
+  void shouldThrowOnEagerFetchWithServerError() {
+    mockWebServer.enqueue(new MockResponse().setResponseCode(500));
+    mockWebServer.enqueue(new MockResponse().setResponseCode(500));
+    mockWebServer.enqueue(new MockResponse().setResponseCode(500));
+
+    TokenConfig eagerConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("eager-500-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(REFRESH_THRESHOLD)
+        .httpClient(httpClient)
+        .eagerFetch(true)
+        .build();
+
+    assertThatThrownBy(() -> new OAuth2TokenManager(eagerConfig))
+        .isInstanceOf(ServiceUnavailableException.class);
   }
 
   // --- getTokenAsync() tests ---
