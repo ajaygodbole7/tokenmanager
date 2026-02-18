@@ -8,6 +8,23 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class TokenManagerResponseValidationTest extends AbstractMockServerTest {
 
+  @Test
+  void shouldLimitResponseBodySize() throws Exception {
+    // Build a 128 KB body — well over the 64 KB limit.
+    // The truncated body will be invalid JSON → ServiceUnavailableException.
+    String padding = "x".repeat(128 * 1024);
+    String oversizedBody = "{\"access_token\": \"" + padding + "\", \"token_type\": \"bearer\", \"expires_in\": 3600}";
+
+    mockWebServer.enqueue(new MockResponse()
+        .setResponseCode(200)
+        .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+        .setBody(oversizedBody));
+
+    assertThatThrownBy(() -> tokenManager.getToken())
+        .isInstanceOf(ServiceUnavailableException.class);
+  }
+
+
   /**
    * Tests that TokenManager properly handles malformed responses.
    *

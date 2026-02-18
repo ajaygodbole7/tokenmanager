@@ -42,6 +42,8 @@ import okhttp3.FormBody;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
+import okhttp3.ResponseBody;
+import okio.BufferedSource;
 
 /**
  * OAuth2TokenManager is responsible for managing the lifecycle of OAuth2 tokens including:
@@ -64,12 +66,13 @@ import okhttp3.Response;
  * - If multiple threads call `getToken()` and a refresh is needed, they all wait on the same future, ensuring that only one refresh is executed.
  */
 @Slf4j
-public class OAuth2TokenManager implements TokenProvider {
+public final class OAuth2TokenManager implements TokenProvider {
 
   // Default configurations and constants
   private static final int FAILURE_THRESHOLD = 100;
   private static final int HALF_OPEN_CALLS = 1;
   private static final long MAX_EXPIRES_IN = 86400L * 365;
+  private static final long MAX_RESPONSE_BODY_BYTES = 64 * 1024;
 
   private final TokenConfig config;
   private final Clock clock;
@@ -140,6 +143,8 @@ public class OAuth2TokenManager implements TokenProvider {
         .connectTimeout(timeout)
         .readTimeout(timeout)
         .writeTimeout(timeout)
+        .followRedirects(false)
+        .followSslRedirects(false)
         .build();
   }
 
@@ -300,8 +305,33 @@ public class OAuth2TokenManager implements TokenProvider {
   }
 
   /**
-   * Computes the maximum time a refresh operation can legitimately take,
-   * accounting for all retry attempts and worst-case jitter between them.
+   * Computes the maximum time a synchronous {@link #getToken()} can block, accounting for
+   * the first HTTP attempt, all retry backoff intervals, and a safety buffer.
+   *
+   * <p><b>Formula:</b>
+   * <pre>
+   *   totalMs = httpTimeout                                      // first attempt
+   *           + sum(i=1..maxAttempts-1) [ backoff(i) + httpTimeout ]  // retries
+   *           + max(5000, maxAttempts * 1000)                    // safety buffer
+   * </pre>
+   *
+   * <p>Each {@code backoff(i)} is {@code initialRetryDelay * 2^(i-1) * 1.5}, which represents
+   * the worst-case delay when Resilience4j's exponential random backoff (randomization factor
+   * 0.5) produces its maximum jitter. The multiplier 1.5 = 1.0 + 0.5 caps the jitter ceiling.
+   *
+   * <p>The safety buffer — {@code max(5000ms, maxAttempts * 1000ms)} — accounts for scheduling
+   * variability in virtual threads, lock contention on {@code refreshLock}, and the inherent
+   * randomness of jitter (the 1.5x ceiling is conservative but not exact). A floor of 5 seconds
+   * prevents the buffer from collapsing when {@code maxAttempts} is small.
+   *
+   * <p><b>Example with defaults</b> (httpTimeout=10s, initialRetryDelay=1s, maxAttempts=3):
+   * <pre>
+   *   attempt 1: 10 000 ms
+   *   retry  1:   1 500 ms backoff + 10 000 ms = 11 500 ms
+   *   retry  2:   3 000 ms backoff + 10 000 ms = 13 000 ms
+   *   buffer:     max(5000, 3000) = 5 000 ms
+   *   total:      39 500 ms (~40s)
+   * </pre>
    */
   private Duration computeOverallTimeout() {
     long httpMs = config.getHttpTimeout().toMillis();
@@ -492,7 +522,7 @@ public class OAuth2TokenManager implements TokenProvider {
    * Reads the error body from the response, or returns a default message if unavailable.
    */
   private String readErrorBodySafely(Response response) throws IOException {
-    return response.body() != null ? response.body().string() : "no error body";
+    return response.body() != null ? readBodyWithLimit(response.body()) : "no error body";
   }
 
   /**
@@ -610,7 +640,23 @@ public class OAuth2TokenManager implements TokenProvider {
    * Reads the response body safely or returns an empty string if none.
    */
   private String readResponseBodySafely(Response response) throws IOException {
-    return response.body() == null ? "" : response.body().string();
+    return response.body() == null ? "" : readBodyWithLimit(response.body());
+  }
+
+  /**
+   * Reads at most {@link #MAX_RESPONSE_BODY_BYTES} from the given response body.
+   * Prevents out-of-memory conditions from malicious or misconfigured servers.
+   */
+  private String readBodyWithLimit(ResponseBody body) throws IOException {
+    try (BufferedSource source = body.source()) {
+      source.request(MAX_RESPONSE_BODY_BYTES);
+      long available = source.getBuffer().size();
+      if (available > MAX_RESPONSE_BODY_BYTES) {
+        log.warn("Response body exceeded {} bytes, truncated", MAX_RESPONSE_BODY_BYTES);
+      }
+      return source.getBuffer().clone()
+          .readString(Math.min(available, MAX_RESPONSE_BODY_BYTES), StandardCharsets.UTF_8);
+    }
   }
 
   /**

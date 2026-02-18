@@ -4,6 +4,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Set;
 import java.util.UUID;
+import okhttp3.OkHttpClient;
 import okhttp3.mockwebserver.MockResponse;
 import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -270,6 +271,40 @@ class TokenManagerConfigAndSecurityTest extends AbstractMockServerTest {
         .grantType(null)
         .build())
         .isInstanceOf(NullPointerException.class);
+  }
+
+  // --- Redirect tests ---
+
+  @Test
+  void shouldNotFollowRedirects() throws Exception {
+    // Verifies that a 302 redirect is treated as an error, not followed.
+    // A redirect from a token endpoint could send credentials to an untrusted host.
+    // Uses a no-redirect httpClient to simulate the internally-created client's behavior.
+    OkHttpClient noRedirectClient = httpClient.newBuilder()
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .build();
+
+    TokenConfig noRedirectConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("redirect-test-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(REFRESH_THRESHOLD)
+        .httpClient(noRedirectClient)
+        .build();
+
+    OAuth2TokenManager mgr = new OAuth2TokenManager(noRedirectConfig);
+    try {
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(302)
+          .addHeader("Location", mockWebServer.url(TOKEN_ENDPOINT).toString()));
+
+      assertThatThrownBy(mgr::getToken)
+          .isInstanceOf(InvalidEndpointException.class);
+    } finally {
+      mgr.close();
+    }
   }
 
   // --- Security tests ---
