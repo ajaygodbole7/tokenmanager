@@ -7,15 +7,9 @@ import java.util.concurrent.CompletableFuture;
 import okhttp3.OkHttpClient;
 import okhttp3.mockwebserver.Dispatcher;
 import okhttp3.mockwebserver.MockResponse;
-import okhttp3.mockwebserver.MockWebServer;
 import okhttp3.mockwebserver.RecordedRequest;
-import okhttp3.tls.HandshakeCertificates;
-import okhttp3.tls.HeldCertificate;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.*;
@@ -33,71 +27,10 @@ import static org.assertj.core.api.Assertions.fail;
  * 3. Shutdown behavior with pending requests
  * 4. Request queueing during refresh operations
  */
-class TokenManagerConcurrencyTest {
-  private static final String TOKEN_ENDPOINT = "/oauth/token";
-  private static final String CONTENT_TYPE_HEADER = "Content-Type";
-  private static final String CONTENT_TYPE_JSON = "application/json";
-  private static final Duration HTTP_TIMEOUT = Duration.ofSeconds(15);
-  private static final Duration REFRESH_THRESHOLD = Duration.ofSeconds(30);
+class TokenManagerConcurrencyTest extends AbstractMockServerTest {
   private static final String EXPECTED_TOKEN = "test-token";
   private static final String EXPIRED_TOKEN = "expired-token";
   private static final String REFRESHED_TOKEN = "refreshed-token";
-
-  private MockWebServer mockWebServer;
-  private OkHttpClient httpClient;
-  private TokenConfig tokenConfig;
-  private OAuth2TokenManager tokenManager;
-
-  @BeforeEach
-  void setUp() throws IOException {
-    HeldCertificate rootCertificate = new HeldCertificate.Builder()
-        .certificateAuthority(1)
-        .build();
-
-    HeldCertificate serverCertificate = new HeldCertificate.Builder()
-        .addSubjectAlternativeName("localhost")
-        .signedBy(rootCertificate)
-        .build();
-
-    HandshakeCertificates serverCerts = new HandshakeCertificates.Builder()
-        .heldCertificate(serverCertificate)
-        .build();
-
-    HandshakeCertificates clientCerts = new HandshakeCertificates.Builder()
-        .addTrustedCertificate(rootCertificate.certificate())
-        .build();
-
-    mockWebServer = new MockWebServer();
-    mockWebServer.useHttps(serverCerts.sslSocketFactory(), false);
-    mockWebServer.start();
-
-    httpClient = new OkHttpClient.Builder()
-        .sslSocketFactory(clientCerts.sslSocketFactory(), clientCerts.trustManager())
-        .hostnameVerifier((hostname, session) -> true)
-        .connectTimeout(HTTP_TIMEOUT)
-        .readTimeout(HTTP_TIMEOUT)
-        .writeTimeout(HTTP_TIMEOUT)
-        .build();
-
-    tokenConfig = TokenConfig.builder()
-        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
-        .clientId("test-client-" + UUID.randomUUID())
-        .clientSecret("test-secret")
-        .httpTimeout(HTTP_TIMEOUT)
-        .refreshThreshold(REFRESH_THRESHOLD)
-        .httpClient(httpClient)
-        .build();
-
-    tokenManager = new OAuth2TokenManager(tokenConfig);
-  }
-
-  @AfterEach
-  void tearDown() throws IOException {
-    tokenManager.close();
-    mockWebServer.shutdown();
-    httpClient.dispatcher().executorService().shutdown();
-    httpClient.connectionPool().evictAll();
-  }
 
   /**
    * Tests the basic concurrent access pattern where multiple threads request a token simultaneously.
