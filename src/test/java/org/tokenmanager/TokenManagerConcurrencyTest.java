@@ -294,10 +294,9 @@ class TokenManagerConcurrencyTest {
 
     // Then
     assertThat(exceptions)
-        .as("Pending requests should fail with appropriate exceptions")
+        .as("Pending requests should fail with ServiceUnavailableException")
         .isNotEmpty()
-        .allMatch(e -> e instanceof ServiceUnavailableException
-            || e instanceof CancellationException);
+        .allMatch(e -> e instanceof ServiceUnavailableException);
 
     executor.shutdown();
     boolean executorTerminated = executor.awaitTermination(5, TimeUnit.SECONDS);

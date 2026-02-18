@@ -121,6 +121,7 @@ public class OAuth2TokenManager implements TokenProvider {
       try {
         refreshToken().join();
       } catch (CompletionException ex) {
+        close();
         Throwable cause = ex.getCause();
         if (cause instanceof TokenException te) throw te;
         throw new ServiceUnavailableException("Eager token fetch failed", cause);
@@ -537,17 +538,17 @@ public class OAuth2TokenManager implements TokenProvider {
         ? errorNode.get("error_description").asText()
         : errorCode.toString();
 
-    switch (errorCode) {
+    throw switch (errorCode) {
       case INVALID_CLIENT, INVALID_GRANT, UNAUTHORIZED_CLIENT,
            ACCESS_DENIED, INVALID_TOKEN ->
-          throw new InvalidCredentialsException(errorDescription);
+          new InvalidCredentialsException(errorDescription);
       case INVALID_REQUEST, INVALID_SCOPE, UNSUPPORTED_GRANT_TYPE,
            INSUFFICIENT_SCOPE, INVALID_REDIRECT_URI,
            UNSUPPORTED_RESPONSE_TYPE, UNSUPPORTED_TOKEN_TYPE ->
-          throw new InvalidConfigurationException(errorDescription);
+          new InvalidConfigurationException(errorDescription);
       case SERVER_ERROR, TEMPORARILY_UNAVAILABLE ->
-          throw new ServiceUnavailableException(errorDescription);
-    }
+          new ServiceUnavailableException(errorDescription);
+    };
   }
 
   /**
