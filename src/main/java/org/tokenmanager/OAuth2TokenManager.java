@@ -367,7 +367,7 @@ public class OAuth2TokenManager implements TokenProvider {
       });
     }
 
-    return newRefresh != null ? newRefresh : existingRefresh;
+    return newRefresh;
   }
 
   /**
@@ -470,19 +470,6 @@ public class OAuth2TokenManager implements TokenProvider {
       }
     }
   }
-
-  /**
-   * Parses the successful token response and performs robust validation:
-   * - Checks for empty body.
-   * - Ensures `access_token` and `expires_in` fields are present and valid.
-   *
-   * @param response The response from the OAuth2 token endpoint
-   * @return A valid OAuth2Token object
-   * @throws IOException If an error occurs reading the response
-   * @throws ServiceUnavailableException If response is malformed or missing required fields
-   */
-
-
 
   private void handleErrorResponse(Response response) throws IOException {
     // 429 classification is status-code authoritative — the response body
@@ -606,6 +593,12 @@ public class OAuth2TokenManager implements TokenProvider {
     }
   }
 
+  /**
+   * Parses the successful token response and performs robust validation.
+   *
+   * @throws IOException if an error occurs reading the response
+   * @throws ServiceUnavailableException if response is malformed or missing required fields
+   */
   private OAuth2Token parseTokenResponse(Response response) throws IOException {
     String responseBody = readResponseBodySafely(response);
     JsonNode node = parseResponseBodyAsJson(responseBody);
