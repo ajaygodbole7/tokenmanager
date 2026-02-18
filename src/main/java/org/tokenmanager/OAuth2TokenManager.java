@@ -88,7 +88,7 @@ public class OAuth2TokenManager implements TokenProvider {
   // Current valid or soon-to-be-refreshed token
   private volatile OAuth2Token currentToken;
   private final AtomicBoolean closed = new AtomicBoolean(false);
-  private volatile boolean refreshWarningLogged = false;
+  private final AtomicBoolean refreshWarningLogged = new AtomicBoolean(false);
   /**
    * Represents the ongoing token refresh operation.
    * If null, no refresh is in progress. If non-null, all callers should wait on this future.
@@ -237,15 +237,17 @@ public class OAuth2TokenManager implements TokenProvider {
    * Warns once when a single-exchange grant type attempts a second refresh.
    */
   private void emitRefreshWarningIfNeeded() {
-    if (!refreshWarningLogged
-        && currentToken != null
-        && config.getGrantType() != OAuth2GrantType.CLIENT_CREDENTIALS
-        && config.getGrantType() != OAuth2GrantType.JWT_BEARER) {
+    if (refreshWarningLogged.get()
+        || currentToken == null
+        || config.getGrantType() == OAuth2GrantType.CLIENT_CREDENTIALS
+        || config.getGrantType() == OAuth2GrantType.JWT_BEARER) {
+      return;
+    }
+    if (refreshWarningLogged.compareAndSet(false, true)) {
       log.warn("Grant type {} does not support automatic refresh. "
           + "First exchange succeeded but subsequent refreshes will replay "
           + "the original grant parameters and likely fail. "
           + "See README grant type caveats.", config.getGrantType());
-      refreshWarningLogged = true;
     }
   }
 
@@ -311,7 +313,7 @@ public class OAuth2TokenManager implements TokenProvider {
       long backoff = (long) (retryDelayMs * Math.pow(2.0, i - 1) * 1.5);
       totalMs += backoff + httpMs;
     }
-    return Duration.ofMillis(totalMs + 5000);
+    return Duration.ofMillis(totalMs + Math.max(5000L, (long) maxAttempts * 1000L));
   }
 
   /**
@@ -827,6 +829,10 @@ public class OAuth2TokenManager implements TokenProvider {
   /**
    * Closes the Token Manager, releasing resources and cancelling any ongoing refresh.
    * This ensures a clean shutdown scenario.
+   *
+   * <p>If an HTTP request is in-flight when close() is called, this method may block
+   * until the request completes or the configured httpTimeout fires, plus up to
+   * 5 additional seconds for executor termination.
    */
   @Override
   public void close() {
@@ -868,7 +874,7 @@ public class OAuth2TokenManager implements TokenProvider {
 
   /** Package-private accessor for testing the one-time refresh warning. */
   boolean isRefreshWarningLogged() {
-    return refreshWarningLogged;
+    return refreshWarningLogged.get();
   }
 
 }

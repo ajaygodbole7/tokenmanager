@@ -680,16 +680,15 @@ class TokenManagerConcurrencyTest {
 
     // Wait for thread to complete
     thread.join(5000);
+    assertThat(thread.isAlive())
+        .as("Thread should have completed within 5s")
+        .isFalse();
 
     // Verify appropriate exception was thrown
+    assertThat(caughtException[0]).isNotNull();
     assertThat(caughtException[0])
         .isInstanceOf(ServiceUnavailableException.class)
         .hasCauseInstanceOf(CancellationException.class);
-
-    // Verify thread is not alive
-    assertThat(thread.isAlive())
-        .as("Thread should have completed")
-        .isFalse();
   }
 
   /**

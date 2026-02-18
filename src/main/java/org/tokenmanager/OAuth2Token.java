@@ -22,8 +22,8 @@ public record OAuth2Token(
    */
   public OAuth2Token {
     // Validate required fields
-    if (tokenValue.isBlank()) {
-      throw new IllegalArgumentException("tokenValue cannot be blank");
+    if (tokenValue == null || tokenValue.isBlank()) {
+      throw new IllegalArgumentException("tokenValue cannot be null or blank");
     }
     if (expiresAt.isBefore(issuedAt)) {
       throw new IllegalArgumentException("expiresAt must be after issuedAt");
@@ -41,8 +41,7 @@ public record OAuth2Token(
    * @return true if token is valid and not within threshold of expiry
    */
   public boolean isValid(Duration threshold, Clock clock) {
-    return tokenValue != null
-        && clock.instant().plus(threshold).isBefore(expiresAt);
+    return clock.instant().plus(threshold).isBefore(expiresAt);
   }
 
   /**
