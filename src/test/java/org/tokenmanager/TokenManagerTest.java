@@ -1132,11 +1132,6 @@ class TokenManagerTest {
     // Advance to t=70: 70+10=80 > 60 → invalid (past expiry)
     clock.advance(Duration.ofSeconds(19));
     assertThat(token.isValid(Duration.ofSeconds(10), clock)).isFalse();
-
-    // Invalid token is always invalid regardless of clock
-    OAuth2Token invalid = OAuth2Token.invalidToken();
-    MutableClock pastClock = new MutableClock(Instant.EPOCH.minusSeconds(1000));
-    assertThat(invalid.isValid(Duration.ZERO, pastClock)).isFalse();
   }
 
   // --- 429 handling and graceful degradation tests ---
@@ -2851,7 +2846,7 @@ class TokenManagerTest {
         .build();
 
     try (OAuth2TokenManager manager = new OAuth2TokenManager(passwordConfig)) {
-      // First fetch — no warning (currentToken is INVALID sentinel)
+      // First fetch — no warning (currentToken is null, no prior token)
       mockWebServer.enqueue(successResponse("pwd-token-1", 5));
       manager.getToken();
       assertThat(manager.isRefreshWarningLogged()).isFalse();

@@ -66,8 +66,6 @@ import okhttp3.Response;
 public class OAuth2TokenManager implements TokenProvider {
 
   // Default configurations and constants
-  private static final Duration DEFAULT_HTTP_TIMEOUT = Duration.ofSeconds(10);
-  private static final Duration DEFAULT_REFRESH_THRESHOLD = Duration.ofSeconds(30);
   private static final int FAILURE_THRESHOLD = 100;
   private static final int HALF_OPEN_CALLS = 1;
   private static final long MAX_EXPIRES_IN = 86400L * 365;
@@ -115,8 +113,8 @@ public class OAuth2TokenManager implements TokenProvider {
     this.retry = createRetry();
 
 
-    // Initialize with an invalid token to force a refresh on first call
-    this.currentToken = OAuth2Token.invalidToken();
+    // null currentToken forces a refresh on first call
+    this.currentToken = null;
 
     if (config.isEagerFetch()) {
       refreshToken();
@@ -173,8 +171,10 @@ public class OAuth2TokenManager implements TokenProvider {
     emitRefreshWarningIfNeeded();
 
     if (circuitBreaker.getState() == CircuitBreaker.State.OPEN) {
+      OAuth2Token token = currentToken;
+      String expiryInfo = token != null ? "Current token expires at: " + token.expiresAt() : "No token available";
       ServiceUnavailableException cbException = new ServiceUnavailableException(
-          "Service unavailable. Current token expires at: " + currentToken.expiresAt());
+          "Service unavailable. " + expiryInfo);
       try {
         return CompletableFuture.completedFuture(tryGracefulDegradation(cbException));
       } catch (TokenException ex) {
@@ -218,8 +218,9 @@ public class OAuth2TokenManager implements TokenProvider {
    * Checks if current token is still valid. If yes, returns it. Otherwise, returns null.
    */
   private String returnCachedTokenIfValid() {
-    if (currentToken.isValid(config.getRefreshThreshold(), clock)) {
-      return currentToken.tokenValue();
+    OAuth2Token token = currentToken;
+    if (token != null && token.isValid(config.getRefreshThreshold(), clock)) {
+      return token.tokenValue();
     }
     return null;
   }
@@ -229,7 +230,7 @@ public class OAuth2TokenManager implements TokenProvider {
    */
   private void emitRefreshWarningIfNeeded() {
     if (!refreshWarningLogged
-        && !currentToken.tokenValue().equals("INVALID")
+        && currentToken != null
         && config.getGrantType() != OAuth2GrantType.CLIENT_CREDENTIALS
         && config.getGrantType() != OAuth2GrantType.JWT_BEARER) {
       log.warn("Grant type {} does not support automatic refresh. "
@@ -275,7 +276,8 @@ public class OAuth2TokenManager implements TokenProvider {
    */
   private String tryGracefulDegradation(TokenException e) {
     OAuth2Token cached = currentToken;
-    if ((e instanceof ServiceUnavailableException || e instanceof RateLimitedException)
+    if (cached != null
+        && (e instanceof ServiceUnavailableException || e instanceof RateLimitedException)
         && clock.instant().isBefore(cached.expiresAt())) {
       log.warn("Transient refresh failure for client {}. Returning current token (expires at {}): {}",
           config.getClientId(), cached.expiresAt(), e.getMessage());
@@ -383,14 +385,6 @@ public class OAuth2TokenManager implements TokenProvider {
           new ServiceUnavailableException("Token manager is closed", e));
     }
   }
-
-  /**
-   * Handles non-2xx responses by parsing the error and throwing the appropriate exception.
-   * Falls back to HTTP status code if parsing fails.
-   *
-   * @param response The HTTP Response from the server
-   * @throws IOException if reading the response body fails
-   */
 
   /**
    * Makes a synchronous HTTP request to the OAuth2 server to obtain a new token.
@@ -761,15 +755,18 @@ public class OAuth2TokenManager implements TokenProvider {
 
     String transitionMessage =
         switch (toState) {
-          case OPEN ->
-              String.format(
+          case OPEN -> {
+              OAuth2Token token = currentToken;
+              String expiryInfo = token != null ? "Last token expires at: " + token.expiresAt() : "No token available";
+              yield String.format(
                   "Service protection activated for client %s. "
                       + "Token refresh suspended for %d seconds after reaching %d%% failure rate. "
-                      + "Last token expires at: %s",
+                      + "%s",
                   config.getClientId(),
                   config.getCircuitBreakerWaitDuration().toSeconds(),
                   FAILURE_THRESHOLD,
-                  currentToken.expiresAt());
+                  expiryInfo);
+          }
           case HALF_OPEN ->
               String.format(
                   "Testing service availability for client %s. "

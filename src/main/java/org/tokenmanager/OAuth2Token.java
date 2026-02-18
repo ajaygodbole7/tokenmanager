@@ -34,22 +34,6 @@ public record OAuth2Token(
   }
 
   /**
-   * Factory method to create an invalid token for initialization and testing.
-   *
-   * @return an invalid OAuth2Token instance
-   */
-  public static OAuth2Token invalidToken() {
-    return new OAuth2Token(
-        "INVALID",
-        OAuth2TokenType.BEARER,
-        Instant.EPOCH,
-        Instant.EPOCH,
-        Set.of()
-    );
-  }
-
-
-  /**
    * Checks if the token is valid considering the given threshold and clock
    *
    * @param threshold how long before actual expiry should token be considered invalid
@@ -58,7 +42,6 @@ public record OAuth2Token(
    */
   public boolean isValid(Duration threshold, Clock clock) {
     return tokenValue != null
-        && !tokenValue.equals("INVALID")
         && clock.instant().plus(threshold).isBefore(expiresAt);
   }
 
