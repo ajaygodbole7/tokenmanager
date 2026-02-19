@@ -160,6 +160,7 @@ public final class OAuth2TokenManager implements TokenProvider {
         .writeTimeout(timeout)
         .followRedirects(false)
         .followSslRedirects(false)
+        .retryOnConnectionFailure(false)
         .build();
   }
 
@@ -170,7 +171,7 @@ public final class OAuth2TokenManager implements TokenProvider {
    * @return A sanitized instance ID string
    */
   private static String generateInstanceId(String clientId) {
-    return "oauth2-token-manager-" + clientId.replaceAll("[^a-zA-Z0-9]", "");
+    return "oauth2-token-manager-" + clientId;
   }
 
   /**
