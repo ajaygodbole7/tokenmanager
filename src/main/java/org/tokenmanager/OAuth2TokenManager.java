@@ -223,6 +223,16 @@ public final class OAuth2TokenManager implements TokenProvider {
   }
 
   @Override
+  public void invalidate() {
+    refreshLock.lock();
+    try {
+      currentToken = null;
+    } finally {
+      refreshLock.unlock();
+    }
+  }
+
+  @Override
   public String getToken() {
     try {
       Duration overallTimeout = computeOverallTimeout();
@@ -468,7 +478,6 @@ public final class OAuth2TokenManager implements TokenProvider {
         requestBuilder.header("Authorization",
             Credentials.basic(config.getClientId(), config.getClientSecret(),
                 StandardCharsets.UTF_8));
-        formBuilder.add("client_id", config.getClientId());
       }
     }
 

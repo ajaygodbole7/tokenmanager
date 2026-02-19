@@ -48,6 +48,16 @@ public interface TokenProvider extends AutoCloseable {
      */
     CompletableFuture<String> getTokenAsync();
 
+    /**
+     * Invalidates the cached token, forcing the next {@link #getToken()} or
+     * {@link #getTokenAsync()} call to fetch a fresh token from the server.
+     *
+     * <p>Use this when a downstream service rejects the token (e.g., 401 after
+     * server-side revocation) and the caller needs to obtain a new one immediately
+     * rather than waiting for the refresh threshold to expire.
+     */
+    void invalidate();
+
     @Override
     void close();
 }

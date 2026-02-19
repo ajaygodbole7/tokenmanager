@@ -551,10 +551,10 @@ class TokenManagerCoreTest extends AbstractMockServerTest {
       assertThat(decoded).startsWith("basic-client-");
       assertThat(decoded).endsWith(":basic-secret");
 
-      // client_id in body for provider compatibility, client_secret omitted
+      // Basic auth: no credentials in form body (RFC 6749 §2.3.1)
       String body = request.getBody().readUtf8();
       assertThat(body).contains("grant_type=client_credentials");
-      assertThat(body).contains("client_id=");
+      assertThat(body).doesNotContain("client_id=");
       assertThat(body).doesNotContain("client_secret=");
     } finally {
       basicManager.close();
@@ -695,5 +695,55 @@ class TokenManagerCoreTest extends AbstractMockServerTest {
         Instant.now(), Instant.now().plusSeconds(3600), Set.of());
 
     assertThat(token.getAuthorizationHeaderValue()).isEqualTo("Bearer abc123");
+  }
+
+  @Test
+  void shouldRefreshAfterInvalidate() throws Exception {
+    mockWebServer.enqueue(new MockResponse()
+        .setResponseCode(200)
+        .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+        .setBody("""
+            {"access_token": "token-1", "token_type": "Bearer", "expires_in": 3600}
+            """));
+    mockWebServer.enqueue(new MockResponse()
+        .setResponseCode(200)
+        .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+        .setBody("""
+            {"access_token": "token-2", "token_type": "Bearer", "expires_in": 3600}
+            """));
+
+    String first = tokenManager.getToken();
+    assertThat(first).isEqualTo("token-1");
+
+    tokenManager.invalidate();
+
+    String second = tokenManager.getToken();
+    assertThat(second).isEqualTo("token-2");
+    assertThat(mockWebServer.getRequestCount()).isEqualTo(2);
+  }
+
+  @Test
+  void shouldRefreshAfterInvalidateAsync() throws Exception {
+    mockWebServer.enqueue(new MockResponse()
+        .setResponseCode(200)
+        .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+        .setBody("""
+            {"access_token": "async-token-1", "token_type": "Bearer", "expires_in": 3600}
+            """));
+    mockWebServer.enqueue(new MockResponse()
+        .setResponseCode(200)
+        .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+        .setBody("""
+            {"access_token": "async-token-2", "token_type": "Bearer", "expires_in": 3600}
+            """));
+
+    String first = tokenManager.getTokenAsync().get(5, java.util.concurrent.TimeUnit.SECONDS);
+    assertThat(first).isEqualTo("async-token-1");
+
+    tokenManager.invalidate();
+
+    String second = tokenManager.getTokenAsync().get(5, java.util.concurrent.TimeUnit.SECONDS);
+    assertThat(second).isEqualTo("async-token-2");
+    assertThat(mockWebServer.getRequestCount()).isEqualTo(2);
   }
 }
