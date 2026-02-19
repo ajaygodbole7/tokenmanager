@@ -79,7 +79,17 @@ public class TokenConfig {
   String refreshToken; // For refresh_token grant
   Supplier<String> assertionSupplier; // For JWT_BEARER
 
-  // Optional custom HTTP client (typically for testing)
+  /**
+   * Optional custom OkHttpClient. If provided, the caller owns its lifecycle —
+   * {@link OAuth2TokenManager} will not close it.
+   *
+   * <p>{@code httpTimeout} controls the overall timeout formula for
+   * {@link OAuth2TokenManager#getToken()}, regardless of whether a custom client
+   * is supplied. If the custom client's connect/read/write timeouts exceed
+   * {@code httpTimeout}, {@code getToken()} may time out while the HTTP call is
+   * still in flight. Set {@code httpTimeout} to match or exceed the custom
+   * client's effective timeout.
+   */
   OkHttpClient httpClient;
 
   /**

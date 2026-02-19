@@ -1086,6 +1086,39 @@ class TokenManagerResilienceTest extends AbstractMockServerTest {
   }
 
   @Test
+  void shouldNotTripCircuitBreakerOnDnsFailure() {
+    // DNS failure wraps as UncheckedIOException(UnknownHostException).
+    // The CB should NOT record these as failures — they are permanent
+    // endpoint problems, not transient service failures.
+    TokenConfig dnsConfig = TokenConfig.builder()
+        .tokenEndpoint("https://nonexistent.invalid/token")
+        .clientId("dns-cb-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(Duration.ofSeconds(5))
+        .refreshThreshold(REFRESH_THRESHOLD)
+        .circuitBreakerMinimumCalls(2)
+        .maxRetryAttempts(1)
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager manager = new OAuth2TokenManager(dnsConfig);
+
+    try {
+      // Make 3 calls — more than circuitBreakerMinimumCalls(2).
+      // Without the fix, the CB would open after 2 failures and the
+      // 3rd call would throw ServiceUnavailableException("Circuit breaker is open").
+      // With the fix, all 3 throw InvalidEndpointException.
+      for (int i = 0; i < 3; i++) {
+        assertThatThrownBy(manager::getToken)
+            .isInstanceOf(InvalidEndpointException.class)
+            .hasMessageContaining("unreachable");
+      }
+    } finally {
+      manager.close();
+    }
+  }
+
+  @Test
   void shouldApplyJitterToRetryIntervals() {
     IntervalFunction intervalFunction =
         IntervalFunction.ofExponentialRandomBackoff(1000, 2.0, 0.5);

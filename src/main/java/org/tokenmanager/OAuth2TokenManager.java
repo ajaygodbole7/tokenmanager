@@ -773,8 +773,18 @@ public final class OAuth2TokenManager implements TokenProvider {
             .minimumNumberOfCalls(config.getCircuitBreakerMinimumCalls())
             .waitDurationInOpenState(config.getCircuitBreakerWaitDuration())
             .permittedNumberOfCallsInHalfOpenState(HALF_OPEN_CALLS)
-            .recordException(e -> e instanceof ServiceUnavailableException
-                || e instanceof UncheckedIOException)
+            .recordException(e -> {
+              if (e instanceof ServiceUnavailableException) return true;
+              if (e instanceof UncheckedIOException) {
+                for (Throwable t = e; t != null; t = t.getCause()) {
+                  if (t instanceof UnknownHostException || t instanceof SSLHandshakeException) {
+                    return false;
+                  }
+                }
+                return true;
+              }
+              return false;
+            })
             .ignoreExceptions(RateLimitedException.class)
             .build();
 
