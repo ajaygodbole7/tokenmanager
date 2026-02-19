@@ -55,8 +55,13 @@ public interface TokenProvider extends AutoCloseable {
      * <p>Use this when a downstream service rejects the token (e.g., 401 after
      * server-side revocation) and the caller needs to obtain a new one immediately
      * rather than waiting for the refresh threshold to expire.
+     *
+     * <p>The default implementation is a no-op for implementations that do not
+     * support invalidation.
      */
-    void invalidate();
+    default void invalidate() {
+        // No-op by default.
+    }
 
     @Override
     void close();
