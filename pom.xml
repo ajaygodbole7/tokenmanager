@@ -25,7 +25,7 @@
   <packaging>jar</packaging>
 
   <name>TokenManager</name>
-  <description>High-performance Oauth2 Token Manager</description>
+  <description>High-performance OAuth2 Token Manager</description>
 
   <url>https://github.com/ajaygodbole7/tokenmanager</url>
   <inceptionYear>2026</inceptionYear>
