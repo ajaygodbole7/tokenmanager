@@ -48,6 +48,7 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
 import lombok.NonNull;
@@ -107,6 +108,8 @@ public final class OAuth2TokenManager implements TokenProvider {
   private volatile OAuth2Token currentToken;
   private final AtomicBoolean closed = new AtomicBoolean(false);
   private final AtomicBoolean refreshWarningLogged = new AtomicBoolean(false);
+  private final AtomicBoolean shortLivedTokenWarningLogged = new AtomicBoolean(false);
+  private final AtomicReference<Instant> rateLimitedUntil = new AtomicReference<>(Instant.MIN);
   /**
    * Represents the ongoing token refresh operation.
    * If null, no refresh is in progress. If non-null, all callers should wait on this future.
@@ -198,6 +201,20 @@ public final class OAuth2TokenManager implements TokenProvider {
     }
 
     emitRefreshWarningIfNeeded();
+
+    // Rate-limit cooldown — avoid hammering server after 429
+    Instant cooldownDeadline = rateLimitedUntil.get();
+    Instant now = clock.instant();
+    if (now.isBefore(cooldownDeadline)) {
+      OAuth2Token token = currentToken;
+      if (token != null && now.isBefore(token.expiresAt())) {
+        return CompletableFuture.completedFuture(token.tokenValue());
+      }
+      Duration remaining = Duration.between(now, cooldownDeadline);
+      return CompletableFuture.failedFuture(
+          new RateLimitedException(
+              "Rate limited — retry after " + remaining.getSeconds() + "s", remaining));
+    }
 
     if (circuitBreaker.getState() == CircuitBreaker.State.OPEN) {
       OAuth2Token token = currentToken;
@@ -530,7 +547,10 @@ public final class OAuth2TokenManager implements TokenProvider {
     // is irrelevant. This guarantees RateLimitedException regardless of
     // whether the server sends a JSON OAuth2 error or plain text.
     if (response.code() == 429) {
-      throw buildRateLimitedException(response);
+      RateLimitedException ex = buildRateLimitedException(response);
+      Duration cooldown = ex.getRetryAfter() != null ? ex.getRetryAfter() : Duration.ofSeconds(1);
+      rateLimitedUntil.set(clock.instant().plus(cooldown));
+      throw ex;
     }
 
     String errorBody = readErrorBodySafely(response);
@@ -657,6 +677,7 @@ public final class OAuth2TokenManager implements TokenProvider {
     String responseBody = readResponseBodySafely(response);
     JsonNode node = parseResponseBodyAsJson(responseBody);
     validateTokenFields(node);
+    rateLimitedUntil.set(Instant.MIN);
     return createOAuth2TokenFromNode(node);
   }
 
@@ -748,6 +769,14 @@ public final class OAuth2TokenManager implements TokenProvider {
     JsonNode scopeNode = node.get("scope");
     if (scopeNode != null && !scopeNode.asText().isBlank()) {
       scopes = Set.of(scopeNode.asText().split("\\s+"));
+    }
+
+    if (expiresIn <= config.getRefreshThreshold().getSeconds()
+        && shortLivedTokenWarningLogged.compareAndSet(false, true)) {
+      log.warn("Token lifetime ({}s) <= refreshThreshold ({}s) for client {}. "
+          + "Every getToken() call will trigger a refresh. "
+          + "Consider reducing refreshThreshold.",
+          expiresIn, config.getRefreshThreshold().getSeconds(), config.getClientId());
     }
 
     Instant now = clock.instant();

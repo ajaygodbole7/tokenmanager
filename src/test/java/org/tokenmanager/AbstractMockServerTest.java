@@ -75,6 +75,7 @@ abstract class AbstractMockServerTest {
         .connectTimeout(HTTP_TIMEOUT)
         .readTimeout(HTTP_TIMEOUT)
         .writeTimeout(HTTP_TIMEOUT)
+        .retryOnConnectionFailure(false)
         .build();
 
     tokenConfig = TokenConfig.builder()

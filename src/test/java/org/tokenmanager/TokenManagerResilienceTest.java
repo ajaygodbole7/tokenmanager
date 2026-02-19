@@ -437,20 +437,23 @@ class TokenManagerResilienceTest extends AbstractMockServerTest {
       // Advance into refresh threshold (token expires at t=300, threshold=10s)
       testClock.advance(Duration.ofSeconds(291));
 
-      // Send 5 consecutive 429s — more than enough to trip the CB (minimum calls = 3)
-      // Each should fall back to the cached token, and CB should stay closed
-      for (int i = 0; i < 5; i++) {
-        mockWebServer.enqueue(new MockResponse()
-            .setResponseCode(429)
-            .addHeader("Retry-After", "30"));
+      // First 429 sets cooldown (Retry-After: 30 → cooldown until t=321)
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(429)
+          .addHeader("Retry-After", "30"));
 
+      // First call hits server, gets 429, falls back to cached token
+      assertThat(manager.getToken()).isEqualTo("good-token");
+
+      // Subsequent calls during cooldown return cached token without HTTP requests
+      for (int i = 0; i < 4; i++) {
         String token = manager.getToken();
         assertThat(token).isEqualTo("good-token");
       }
+      assertThat(mockWebServer.getRequestCount()).isEqualTo(2); // 1 initial + 1 first 429
 
-      // Now serve a successful refresh — if CB had tripped, this would fail
-      // Advance clock a bit more so the previous cached check doesn't short-circuit
-      testClock.advance(Duration.ofSeconds(5));
+      // Advance past cooldown (t=322 > cooldown at t=321) and past token expiry (t=322 > t=300)
+      testClock.advance(Duration.ofSeconds(31));
 
       mockWebServer.enqueue(new MockResponse()
           .setResponseCode(200)
@@ -1137,6 +1140,158 @@ class TokenManagerResilienceTest extends AbstractMockServerTest {
     assertThat(allIdentical)
         .as("Jitter should produce varying intervals")
         .isFalse();
+  }
+
+  // --- 429 cooldown tests ---
+
+  @Test
+  void shouldRespectRateLimitCooldownWithExpiredToken() throws Exception {
+    MutableClock testClock = new MutableClock(Instant.now());
+
+    TokenConfig testConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("429-cooldown-expired-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(Duration.ofSeconds(10))
+        .clock(testClock)
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager manager = new OAuth2TokenManager(testConfig);
+
+    try {
+      // Get initial token (expires at t=60)
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(200)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {"access_token": "initial", "token_type": "Bearer", "expires_in": 60}
+              """));
+      manager.getToken();
+
+      // Advance past expiry
+      testClock.advance(Duration.ofSeconds(61));
+
+      // Server returns 429 with Retry-After: 10
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(429)
+          .addHeader("Retry-After", "10"));
+
+      // First call: makes HTTP request, gets 429, token expired → throws
+      assertThatThrownBy(manager::getToken).isInstanceOf(RateLimitedException.class);
+      int requestsAfterFirst429 = mockWebServer.getRequestCount();
+
+      // Second call during cooldown: should throw WITHOUT making HTTP request
+      assertThatThrownBy(manager::getToken)
+          .isInstanceOf(RateLimitedException.class)
+          .hasMessageContaining("retry after");
+      assertThat(mockWebServer.getRequestCount()).isEqualTo(requestsAfterFirst429);
+    } finally {
+      manager.close();
+    }
+  }
+
+  @Test
+  void shouldReturnCachedTokenDuringRateLimitCooldown() throws Exception {
+    MutableClock testClock = new MutableClock(Instant.now());
+
+    TokenConfig testConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("429-cooldown-cached-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(Duration.ofSeconds(10))
+        .clock(testClock)
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager manager = new OAuth2TokenManager(testConfig);
+
+    try {
+      // Get initial token (expires at t=300)
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(200)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {"access_token": "cached-token", "token_type": "Bearer", "expires_in": 300}
+              """));
+      manager.getToken();
+
+      // Advance into refresh threshold (t=291, token valid until t=300)
+      testClock.advance(Duration.ofSeconds(291));
+
+      // Server returns 429 with Retry-After: 30 → cooldown until t=321
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(429)
+          .addHeader("Retry-After", "30"));
+
+      // First call hits server, gets 429, falls back to cached token
+      assertThat(manager.getToken()).isEqualTo("cached-token");
+      int requestsAfter429 = mockWebServer.getRequestCount();
+
+      // Subsequent calls during cooldown return cached token without HTTP requests
+      assertThat(manager.getToken()).isEqualTo("cached-token");
+      assertThat(manager.getToken()).isEqualTo("cached-token");
+      assertThat(mockWebServer.getRequestCount()).isEqualTo(requestsAfter429);
+    } finally {
+      manager.close();
+    }
+  }
+
+  @Test
+  void shouldResumeRefreshAfterCooldownExpires() throws Exception {
+    MutableClock testClock = new MutableClock(Instant.now());
+
+    TokenConfig testConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("429-cooldown-resume-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(Duration.ofSeconds(10))
+        .clock(testClock)
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager manager = new OAuth2TokenManager(testConfig);
+
+    try {
+      // Get initial token (expires at t=60)
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(200)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {"access_token": "initial", "token_type": "Bearer", "expires_in": 60}
+              """));
+      manager.getToken();
+
+      // Advance past expiry
+      testClock.advance(Duration.ofSeconds(61));
+
+      // Server returns 429 with Retry-After: 5 → cooldown until t=66
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(429)
+          .addHeader("Retry-After", "5"));
+
+      // First call: gets 429, throws (expired token)
+      assertThatThrownBy(manager::getToken).isInstanceOf(RateLimitedException.class);
+
+      // Advance past cooldown (t=67 > t=66)
+      testClock.advance(Duration.ofSeconds(6));
+
+      // Enqueue success response
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(200)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {"access_token": "refreshed", "token_type": "Bearer", "expires_in": 300}
+              """));
+
+      // Should make HTTP request and succeed
+      assertThat(manager.getToken()).isEqualTo("refreshed");
+    } finally {
+      manager.close();
+    }
   }
 
   @Test

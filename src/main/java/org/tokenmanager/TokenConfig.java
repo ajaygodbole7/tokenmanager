@@ -49,6 +49,14 @@ public class TokenConfig {
 
   @NonNull @Default Set<String> scope = Collections.emptySet();
 
+  /**
+   * How long before token expiry to trigger a proactive refresh.
+   * Must be shorter than the token lifetime issued by the authorization server.
+   * If {@code refreshThreshold} &gt;= token lifetime, every
+   * {@link OAuth2TokenManager#getToken()} call will trigger a refresh.
+   * Single-flight prevents concurrent stampede, but throughput may degrade.
+   * Default: 30 seconds.
+   */
   @NonNull @Default Duration refreshThreshold = DEFAULT_REFRESH_THRESHOLD;
 
   @NonNull @Default Duration httpTimeout = DEFAULT_HTTP_TIMEOUT;
