@@ -396,4 +396,23 @@ class TokenManagerConfigAndSecurityTest extends AbstractMockServerTest {
       manager.close();
     }
   }
+
+  @Test
+  void shouldNotCloseUserProvidedHttpClient() {
+    OkHttpClient customClient = new OkHttpClient.Builder().build();
+    String endpoint = mockWebServer.url("/token").toString();
+
+    TokenConfig config = TokenConfig.builder()
+        .tokenEndpoint(endpoint)
+        .clientId("custom-client-lifecycle-" + UUID.randomUUID())
+        .clientSecret("secret")
+        .httpClient(customClient)
+        .build();
+    config.validate();
+
+    OAuth2TokenManager manager = new OAuth2TokenManager(config);
+    manager.close();
+
+    assertThat(customClient.dispatcher().executorService().isShutdown()).isFalse();
+  }
 }

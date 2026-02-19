@@ -56,6 +56,11 @@ public interface TokenProvider extends AutoCloseable {
      * server-side revocation) and the caller needs to obtain a new one immediately
      * rather than waiting for the refresh threshold to expire.
      *
+     * <p>If a refresh is already in progress, its result will become the new cached
+     * token. Callers who need a guaranteed new server exchange should wait for the
+     * current {@link #getToken()} call to complete, then call {@code invalidate()}
+     * followed by {@link #getToken()}.
+     *
      * <p>The default implementation is a no-op for implementations that do not
      * support invalidation.
      */

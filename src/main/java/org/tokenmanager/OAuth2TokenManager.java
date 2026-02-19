@@ -25,7 +25,6 @@ import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.github.resilience4j.circuitbreaker.event.CircuitBreakerOnStateTransitionEvent;
 import io.github.resilience4j.core.IntervalFunction;
-import io.github.resilience4j.decorators.Decorators;
 import io.github.resilience4j.retry.Retry;
 import io.github.resilience4j.retry.RetryConfig;
 import io.github.resilience4j.retry.RetryRegistry;
@@ -50,6 +49,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Supplier;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.Credentials;
@@ -436,19 +436,16 @@ public final class OAuth2TokenManager implements TokenProvider {
    */
   private CompletableFuture<OAuth2Token> startNewRefresh() {
     try {
-      return CompletableFuture.supplyAsync(() -> {
-        return Decorators.ofSupplier(() -> {
-              try {
-                return requestNewToken();
-              } catch (IOException e) {
-                throw new UncheckedIOException(e);
-              }
-            })
-            .withRetry(retry)
-            .withCircuitBreaker(circuitBreaker)
-            .decorate()
-            .get();
-      }, executor);
+      Supplier<OAuth2Token> supplier = () -> {
+        try {
+          return requestNewToken();
+        } catch (IOException e) {
+          throw new UncheckedIOException(e);
+        }
+      };
+      supplier = Retry.decorateSupplier(retry, supplier);
+      supplier = CircuitBreaker.decorateSupplier(circuitBreaker, supplier);
+      return CompletableFuture.supplyAsync(supplier, executor);
     } catch (RejectedExecutionException e) {
       return CompletableFuture.failedFuture(
           new ServiceUnavailableException("Token manager is closed", e));
@@ -523,6 +520,8 @@ public final class OAuth2TokenManager implements TokenProvider {
       case JWT_BEARER -> {
         formBuilder.add("assertion", config.getAssertion());
       }
+      case CLIENT_CREDENTIALS -> { /* no additional params */ }
+      case IMPLICIT -> throw new IllegalStateException("IMPLICIT rejected at validation");
     }
   }
 
@@ -679,7 +678,7 @@ public final class OAuth2TokenManager implements TokenProvider {
       if (available > MAX_RESPONSE_BODY_BYTES) {
         log.warn("Response body exceeded {} bytes, truncated", MAX_RESPONSE_BODY_BYTES);
       }
-      return source.getBuffer().clone()
+      return source.getBuffer()
           .readString(Math.min(available, MAX_RESPONSE_BODY_BYTES), StandardCharsets.UTF_8);
     }
   }
