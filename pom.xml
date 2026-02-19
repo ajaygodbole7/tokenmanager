@@ -25,7 +25,7 @@
   <packaging>jar</packaging>
 
   <name>TokenManager</name>
-  <description>High-performance OAuth2 Token Manager</description>
+  <description>OAuth2 token lifecycle management with caching, automatic refresh, and fault tolerance</description>
 
   <url>https://github.com/ajaygodbole7/tokenmanager</url>
   <inceptionYear>2026</inceptionYear>
@@ -42,8 +42,7 @@
     <developer>
       <name>ajaygodbole7</name>
       <email>ajaygodbole7@users.noreply.github.com</email>
-      <organization>TokenManager</organization>
-      <organizationUrl>https://github.com/ajaygodbole7/tokenmanager</organizationUrl>
+      <url>https://github.com/ajaygodbole7</url>
     </developer>
   </developers>
 

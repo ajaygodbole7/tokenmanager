@@ -104,7 +104,7 @@ Release decisions are driven by adoption feedback, not a predetermined feature l
 
 ### 0.1.0 — Initial release
 
-Current codebase. All code fixes are merged (blank validation, scope defensive copy, `cancelAll()` on close, log level fix). Remaining work: pom.xml tag corrections and a GitHub Actions CI workflow (`mvn verify` + dependency scanning on PRs, GPG-signed release process).
+Current codebase. Remaining work: GitHub Actions CI workflow (`mvn verify` + dependency scanning on PRs, GPG-signed release process).
 
 **Gate:** All unit tests pass, CI green, non-SNAPSHOT version published to Maven Central.
 
@@ -128,7 +128,7 @@ Ship when the public API (`TokenProvider`, `TokenConfig`, `TokenException` hiera
 
 | Milestone | Target | Dependency |
 |-----------|--------|------------|
-| 0.1.0 | When CI is green and fixes merged | GitHub Actions workflow + pom.xml corrections |
+| 0.1.0 | When CI is green | GitHub Actions workflow |
 | 0.2.0 | 4–8 weeks after 0.1.0 | At least one adopter's production feedback |
 | 1.0.0 | When API is stable across 0.x | No breaking changes pending |
 
