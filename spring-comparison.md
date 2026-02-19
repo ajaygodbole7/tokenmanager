@@ -99,7 +99,7 @@ public class AppConfig {
 | HTTPS enforcement | No constructor-time check | Yes — rejects non-HTTPS at construction |
 | Secret redaction | Varies | `toString()` and exceptions tested for leakage |
 | **Operational** | | |
-| Reactive | Yes — `ReactiveOAuth2AuthorizedClientManager` | No — blocking. Wrap in `Mono.fromCallable()` if needed |
+| Reactive | Yes — `ReactiveOAuth2AuthorizedClientManager` | No — `getTokenAsync()` returns `CompletableFuture<String>` but no reactive streams integration |
 | Token persistence | Yes — JDBC | No — in-memory only |
 | Metrics | Yes — Actuator / Micrometer | No — SLF4J logs only |
 | **Integration** | | |
