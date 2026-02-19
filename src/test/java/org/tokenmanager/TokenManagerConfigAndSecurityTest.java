@@ -17,6 +17,7 @@ package org.tokenmanager;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
 import okhttp3.OkHttpClient;
@@ -28,6 +29,44 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class TokenManagerConfigAndSecurityTest extends AbstractMockServerTest {
 
   // --- TokenConfig validation tests ---
+
+  @Test
+  void shouldRejectBlankClientId() {
+    assertThatThrownBy(() -> TokenConfig.builder()
+        .tokenEndpoint("https://auth.example.com/oauth/token")
+        .clientId(" ")
+        .clientSecret("secret")
+        .build()
+        .validate())
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("clientId");
+  }
+
+  @Test
+  void shouldRejectBlankTokenEndpoint() {
+    assertThatThrownBy(() -> TokenConfig.builder()
+        .tokenEndpoint(" ")
+        .clientId("client")
+        .clientSecret("secret")
+        .build()
+        .validate())
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("tokenEndpoint");
+  }
+
+  @Test
+  void shouldDefensivelyCopyScope() {
+    Set<String> mutable = new HashSet<>(Set.of("read"));
+    TokenConfig config = TokenConfig.builder()
+        .tokenEndpoint("https://auth.example.com/oauth/token")
+        .clientId("client")
+        .clientSecret("secret")
+        .scope(mutable)
+        .build();
+    mutable.add("write");
+    assertThat(config.getScope()).hasSize(1);
+    assertThat(config.getScope()).contains("read");
+  }
 
   @Test
   void shouldRejectNonHttpsEndpoint() {

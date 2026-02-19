@@ -115,6 +115,12 @@ public class TokenConfig {
       this.assertionSupplier = () -> assertion;
       return this;
     }
+
+    public TokenConfigBuilder scope(@NonNull Set<String> scope) {
+      this.scope$value = Set.copyOf(scope);
+      this.scope$set = true;
+      return this;
+    }
   }
 
   /** Invokes the supplier on each call — secrets are always fresh. */
@@ -128,6 +134,12 @@ public class TokenConfig {
   }
 
   public void validate() {
+    if (clientId.isBlank()) {
+      throw new IllegalArgumentException("clientId must not be blank");
+    }
+    if (tokenEndpoint.isBlank()) {
+      throw new IllegalArgumentException("tokenEndpoint must not be blank");
+    }
     if (refreshThreshold.isNegative() || refreshThreshold.isZero()) {
       throw new IllegalArgumentException("refreshThreshold must be positive");
     }

@@ -969,6 +969,7 @@ public final class OAuth2TokenManager implements TokenProvider {
 
     // Close HTTP resources only if we created the client
     if (httpClient != null && config.getHttpClient() == null) {
+      httpClient.dispatcher().cancelAll();
       httpClient.dispatcher().executorService().shutdown();
       httpClient.connectionPool().evictAll();
     }
