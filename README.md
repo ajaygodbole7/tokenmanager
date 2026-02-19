@@ -47,6 +47,8 @@ A circuit breaker opens after consecutive transient failures. Default cooldown i
 
 Retries use exponential backoff with ±50% jitter, up to 3 attempts. Only network-level failures are retried — connection resets and socket timeouts. Server errors (5xx), auth errors, and rate limits are not retried.
 
+If the server returns 429 with a `Retry-After` header, the manager pauses refresh attempts for the specified duration. During the cooldown, `getToken()` returns the cached token if it hasn't expired, or throws `RateLimitedException` if it has.
+
 ## Error handling
 
 `getToken()` throws `TokenException`. There are five sealed subclasses, so Java 21 `switch` is exhaustive:
