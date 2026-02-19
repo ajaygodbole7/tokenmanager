@@ -577,7 +577,7 @@ public final class OAuth2TokenManager implements TokenProvider {
     try {
       return objectMapper.readTree(errorBody);
     } catch (Exception e) {
-      log.error("Failed to parse error response as JSON for client {}", config.getClientId(), e);
+      log.warn("Failed to parse error response as JSON for client {}", config.getClientId(), e);
       return null;
     }
   }
