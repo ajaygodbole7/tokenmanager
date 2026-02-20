@@ -22,7 +22,7 @@ Requires Java 21+. No framework dependency. `getToken()` returns a `String` — 
 
 ```xml
 <dependency>
-    <groupId>org.tokenmanager</groupId>
+    <groupId>io.github.ajaygodbole7</groupId>
     <artifactId>tokenmanager</artifactId>
     <version>0.1.0-SNAPSHOT</version>
 </dependency>

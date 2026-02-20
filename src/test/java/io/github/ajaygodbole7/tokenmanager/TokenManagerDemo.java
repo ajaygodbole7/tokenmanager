@@ -1,0 +1,87 @@
+/*
+ * Copyright 2026 ajaygodbole7
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package io.github.ajaygodbole7.tokenmanager;
+
+import java.time.Duration;
+import lombok.extern.slf4j.Slf4j;
+
+@Slf4j
+public class TokenManagerDemo {
+
+  public static void main(String[] args) {
+    // Create token configuration
+    TokenConfig config = TokenConfig.builder()
+        .grantType(OAuth2GrantType.PASSWORD)
+        .clientId("demo-client")
+        .clientSecret("demo-secret")
+        .username("user@example.com")
+        .password("userPassword123")
+        .tokenEndpoint("https://auth.example.com/oauth/token")
+        .httpTimeout(Duration.ofSeconds(10))
+        .refreshThreshold(Duration.ofSeconds(30))
+        .build();
+
+    // Create token manager instance
+    try (OAuth2TokenManager tokenManager = new OAuth2TokenManager(config)) {
+      // Create multiple virtual threads that will request tokens
+      Thread thread1 = Thread.ofVirtual().name("Thread-1").unstarted(() -> getTokenAndLog(tokenManager, "Thread-1"));
+      Thread thread2 = Thread.ofVirtual().name("Thread-2").unstarted(() -> getTokenAndLog(tokenManager, "Thread-2"));
+      Thread thread3 = Thread.ofVirtual().name("Thread-3").unstarted(() -> getTokenAndLog(tokenManager, "Thread-3"));
+
+      // Start all threads
+      thread1.start();
+      thread2.start();
+      thread3.start();
+
+      // Wait for all threads to complete
+      thread1.join();
+      thread2.join();
+      thread3.join();
+
+      // Demonstrate token refresh by waiting and requesting again
+      log.info("Waiting 5 seconds before requesting token again...");
+      Thread.sleep(5000);
+
+      // Create new virtual threads to demonstrate refresh behavior
+      Thread refresh1 = Thread.ofVirtual().name("Refresh-1").unstarted(() -> getTokenAndLog(tokenManager, "Refresh-1"));
+      Thread refresh2 = Thread.ofVirtual().name("Refresh-2").unstarted(() -> getTokenAndLog(tokenManager, "Refresh-2"));
+
+      refresh1.start();
+      refresh2.start();
+
+      refresh1.join();
+      refresh2.join();
+    } catch (Exception e) {
+      log.error("Error in token manager demo", e);
+    }
+  }
+
+  private static void getTokenAndLog(OAuth2TokenManager tokenManager, String threadName) {
+    try {
+      String token = tokenManager.getToken();
+      log.info("{} got token: {}...", threadName, maskToken(token));
+    } catch (Exception e) {
+      log.error("{} failed to get token", threadName, e);
+    }
+  }
+
+  private static String maskToken(String token) {
+    if (token == null || token.length() <= 8) {
+      return token;
+    }
+    return token.substring(0, 8) + "...";
+  }
+}
