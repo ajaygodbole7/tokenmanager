@@ -9,7 +9,7 @@
 
   <Loggers>
     <!-- JsonMapper Logger -->
-    <Logger name="org.tokenmanager" level="INFO" additivity="false">
+    <Logger name="io.github.ajaygodbole7.tokenmanager" level="INFO" additivity="false">
       <AppenderRef ref="Console"/>
     </Logger>
 
