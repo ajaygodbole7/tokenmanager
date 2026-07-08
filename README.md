@@ -16,7 +16,7 @@ try (OAuth2TokenManager tokenManager = new OAuth2TokenManager(config)) {
 }
 ```
 
-Requires Java 21+. No framework dependency. `getToken()` returns a `String` — use it with any HTTP client.
+Requires Java 25+. No framework dependency. `getToken()` returns a `String` — use it with any HTTP client.
 
 ## Installation
 
@@ -51,7 +51,7 @@ If the server returns 429 with a `Retry-After` header, the manager pauses refres
 
 ## Error handling
 
-`getToken()` throws `TokenException`. There are five sealed subclasses, so Java 21 `switch` is exhaustive:
+`getToken()` throws `TokenException`. There are five sealed subclasses, so the `switch` is exhaustive:
 
 ```java
 try {

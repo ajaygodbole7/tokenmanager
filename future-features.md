@@ -34,7 +34,7 @@ Subtract a safety buffer from `expires_in` to account for clock skew and network
 
 Allow callers to provide their own `ExecutorService` instead of the hardcoded `Executors.newVirtualThreadPerTaskExecutor()`.
 
-**Why deferred:** Library requires Java 21. Single-flight design means at most one virtual thread does blocking I/O at any time. No real scenario where overriding the executor helps. Adds an ownership/lifecycle pattern (`ownsExecutor`) for zero practical benefit today.
+**Why deferred:** Library requires Java 25. Single-flight design means at most one virtual thread does blocking I/O at any time. No real scenario where overriding the executor helps. Adds an ownership/lifecycle pattern (`ownsExecutor`) for zero practical benefit today.
 
 **When to revisit:** If the library is backported to Java 17 (where virtual threads are preview), or if adopters demonstrate a concrete need for bounded thread pools in their environment.
 
