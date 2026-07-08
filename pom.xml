@@ -69,7 +69,7 @@
     <slf4j.version>2.0.18</slf4j.version>
     <lombok.version>1.18.46</lombok.version>
     <resilience4j.version>2.4.0</resilience4j.version>
-    <okhttp.version>5.3.2</okhttp.version>
+    <okhttp.version>5.4.0</okhttp.version>
 
     <!-- Test dependencies -->
     <junit.version>5.11.3</junit.version>
