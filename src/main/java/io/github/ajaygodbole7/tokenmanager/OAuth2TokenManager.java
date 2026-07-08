@@ -30,14 +30,17 @@ import io.github.resilience4j.retry.RetryConfig;
 import io.github.resilience4j.retry.RetryRegistry;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.net.URLEncoder;
 import java.net.UnknownHostException;
 import javax.net.ssl.SSLHandshakeException;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -89,15 +92,19 @@ public final class OAuth2TokenManager implements TokenProvider {
   private static final int HALF_OPEN_CALLS = 1;
   private static final long MAX_EXPIRES_IN = 86400L * 365;
   private static final long MAX_RESPONSE_BODY_BYTES = 64 * 1024;
+  private static final Duration MAX_RETRY_AFTER = Duration.ofHours(24);
+  // ObjectMapper is thread-safe for read operations and holds no per-manager state.
+  private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
   private final TokenConfig config;
   private final Clock clock;
   private final OkHttpClient httpClient;
-  private final ObjectMapper objectMapper;
   private final CircuitBreaker circuitBreaker;
   private final Retry retry;
   private final ExecutorService executor;
   private final String instanceId;
+  // Upper bound on how long a synchronous getToken() blocks; derived once from config.
+  private final Duration overallTimeout;
   /**
    * Lock to protect access to ongoingRefresh and other shared mutable states.
    * Concurrency Decision: Using a ReentrantLock provides a clear and explicit concurrency control mechanism.
@@ -129,10 +136,10 @@ public final class OAuth2TokenManager implements TokenProvider {
     this.instanceId = generateInstanceId(config.getClientId());
     this.httpClient = Optional.ofNullable(config.getHttpClient())
         .orElseGet(() -> createHttpClient(config.getHttpTimeout()));
-    this.objectMapper = new ObjectMapper();
     this.executor = Executors.newVirtualThreadPerTaskExecutor();
     this.circuitBreaker = createCircuitBreaker();
     this.retry = createRetry();
+    this.overallTimeout = computeOverallTimeout();
 
 
     // null currentToken forces a refresh on first call
@@ -141,11 +148,9 @@ public final class OAuth2TokenManager implements TokenProvider {
     if (config.isEagerFetch()) {
       try {
         refreshToken().join();
-      } catch (CompletionException ex) {
+      } catch (CompletionException | CancellationException ex) {
         close();
-        Throwable cause = ex.getCause();
-        if (cause instanceof TokenException te) throw te;
-        throw new ServiceUnavailableException("Eager token fetch failed", cause);
+        throw mapToTokenException(ex);
       }
     }
   }
@@ -161,6 +166,7 @@ public final class OAuth2TokenManager implements TokenProvider {
         .connectTimeout(timeout)
         .readTimeout(timeout)
         .writeTimeout(timeout)
+        .callTimeout(timeout)
         .followRedirects(false)
         .followSslRedirects(false)
         .retryOnConnectionFailure(false)
@@ -216,18 +222,11 @@ public final class OAuth2TokenManager implements TokenProvider {
               "Rate limited — retry after " + remaining.getSeconds() + "s", remaining));
     }
 
-    if (circuitBreaker.getState() == CircuitBreaker.State.OPEN) {
-      OAuth2Token token = currentToken;
-      String expiryInfo = token != null ? "Current token expires at: " + token.expiresAt() : "No token available";
-      ServiceUnavailableException cbException = new ServiceUnavailableException(
-          "Service unavailable. " + expiryInfo);
-      try {
-        return CompletableFuture.completedFuture(tryGracefulDegradation(cbException));
-      } catch (TokenException ex) {
-        return CompletableFuture.failedFuture(ex);
-      }
-    }
-
+    // An open circuit breaker is not special-cased here: the decorated supplier
+    // throws CallNotPermittedException, which mapToTokenException converts to a
+    // ServiceUnavailableException and tryGracefulDegradation handles below. This
+    // lets a call reach tryAcquirePermission() so the breaker can transition
+    // OPEN -> HALF_OPEN once its wait duration elapses and recover.
     return refreshToken()
         .thenApply(OAuth2Token::tokenValue)
         .exceptionallyCompose(ex -> {
@@ -248,12 +247,14 @@ public final class OAuth2TokenManager implements TokenProvider {
     } finally {
       refreshLock.unlock();
     }
+    // Clear any active 429 cooldown so the next call is free to fetch a fresh
+    // token, honoring invalidate()'s contract even during a rate-limit window.
+    rateLimitedUntil.set(Instant.MIN);
   }
 
   @Override
   public String getToken() {
     try {
-      Duration overallTimeout = computeOverallTimeout();
       return getTokenAsync().get(overallTimeout.toMillis(), TimeUnit.MILLISECONDS);
     } catch (ExecutionException e) {
       Throwable cause = e.getCause();
@@ -261,12 +262,14 @@ public final class OAuth2TokenManager implements TokenProvider {
       if (cause instanceof IllegalStateException ise) throw ise;
       throw new ServiceUnavailableException("Unexpected failure", cause);
     } catch (TimeoutException e) {
-      throw new ServiceUnavailableException("Token refresh timed out", e);
+      return tryGracefulDegradation(new ServiceUnavailableException("Token refresh timed out", e));
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
-      throw new ServiceUnavailableException("Token refresh interrupted", e);
+      return tryGracefulDegradation(
+          new ServiceUnavailableException("Token refresh interrupted", e));
     } catch (CancellationException e) {
-      throw new ServiceUnavailableException("Token refresh was canceled", e);
+      return tryGracefulDegradation(
+          new ServiceUnavailableException("Token refresh was canceled", e));
     }
   }
 
@@ -376,7 +379,7 @@ public final class OAuth2TokenManager implements TokenProvider {
    *   total:      39 500 ms (~40s)
    * </pre>
    */
-  private Duration computeOverallTimeout() {
+  Duration computeOverallTimeout() {
     long httpMs = config.getHttpTimeout().toMillis();
     long retryDelayMs = config.getInitialRetryDelay().toMillis();
     int maxAttempts = config.getMaxRetryAttempts();
@@ -402,45 +405,42 @@ public final class OAuth2TokenManager implements TokenProvider {
    * @return A CompletableFuture that will complete with a new OAuth2Token or an appropriate exception.
    */
   private CompletableFuture<OAuth2Token> refreshToken() {
-    CompletableFuture<OAuth2Token> existingRefresh;
-    CompletableFuture<OAuth2Token> newRefresh = null;
-
     refreshLock.lock();
     try {
-      existingRefresh = ongoingRefresh;
-      if (existingRefresh != null && !existingRefresh.isDone()) {
+      if (ongoingRefresh != null && !ongoingRefresh.isDone()) {
         // Another thread is currently refreshing, use that future
-        return existingRefresh;
+        return ongoingRefresh;
       }
-      // Need to start a new refresh
-      newRefresh = startNewRefresh();
-      ongoingRefresh = newRefresh;
+
+      // Start a new refresh and attach the completion handler while still holding
+      // the lock, so no other thread can observe or replace ongoingRefresh before
+      // the handler is registered. A successful token is published unconditionally
+      // (even if a newer refresh has since started) so it is never lost. The
+      // returned future completes only after the handler runs, so callers that
+      // join on it — including eager fetch — see currentToken already published.
+      AtomicReference<CompletableFuture<OAuth2Token>> publishedRef = new AtomicReference<>();
+      CompletableFuture<OAuth2Token> published =
+          startNewRefresh().whenComplete((result, error) -> {
+            refreshLock.lock();
+            try {
+              if (error == null) {
+                currentToken = result; // Successfully obtained a new token
+              }
+              // Clear only if this is still the current refresh (close() or a
+              // newer refresh may have replaced it).
+              if (ongoingRefresh == publishedRef.get()) {
+                ongoingRefresh = null;
+              }
+            } finally {
+              refreshLock.unlock();
+            }
+          });
+      publishedRef.set(published);
+      ongoingRefresh = published;
+      return published;
     } finally {
       refreshLock.unlock();
     }
-
-    // Set up completion handler outside the lock
-    // This avoids holding the lock while waiting for IO to complete.
-    if (newRefresh != null) {
-      CompletableFuture<OAuth2Token> finalNewRefresh = newRefresh;
-      newRefresh.whenComplete((result, error) -> {
-        // Acquire lock again only for a short time to update shared state
-        refreshLock.lock();
-        try {
-          // Only update if ongoingRefresh still points to this future
-          if (ongoingRefresh == finalNewRefresh) {
-            if (error == null) {
-              currentToken = result; // Successfully obtained a new token
-            }
-            ongoingRefresh = null;
-          }
-        } finally {
-          refreshLock.unlock();
-        }
-      });
-    }
-
-    return newRefresh;
   }
 
   /**
@@ -490,16 +490,21 @@ public final class OAuth2TokenManager implements TokenProvider {
         formBuilder.add("client_secret", config.getClientSecret());
       }
       case CLIENT_SECRET_BASIC -> {
+        // RFC 6749 §2.3.1: client_id and client_secret are application/x-www-form-urlencoded
+        // before being used as the HTTP Basic username and password.
         requestBuilder.header("Authorization",
-            Credentials.basic(config.getClientId(), config.getClientSecret(),
+            Credentials.basic(
+                URLEncoder.encode(config.getClientId(), StandardCharsets.UTF_8),
+                URLEncoder.encode(config.getClientSecret(), StandardCharsets.UTF_8),
                 StandardCharsets.UTF_8));
       }
     }
 
     addGrantTypeSpecificParams(formBuilder);
 
-    if (!config.getScopeString().isEmpty()) {
-      formBuilder.add("scope", config.getScopeString());
+    String scopeString = config.getScopeString();
+    if (!scopeString.isEmpty()) {
+      formBuilder.add("scope", scopeString);
     }
 
     requestBuilder.post(formBuilder.build());
@@ -575,7 +580,7 @@ public final class OAuth2TokenManager implements TokenProvider {
    */
   private JsonNode tryParseErrorBody(String errorBody) {
     try {
-      return objectMapper.readTree(errorBody);
+      return OBJECT_MAPPER.readTree(errorBody);
     } catch (Exception e) {
       log.warn("Failed to parse error response as JSON for client {}", config.getClientId(), e);
       return null;
@@ -632,8 +637,7 @@ public final class OAuth2TokenManager implements TokenProvider {
    * header into a Duration when present.
    */
   private RateLimitedException buildRateLimitedException(Response response) {
-    String retryAfterHeader = response.header("Retry-After");
-    Duration retryAfter = parseRetryAfter(retryAfterHeader);
+    Duration retryAfter = parseRetryAfter(response);
     String msg = retryAfter != null
         ? "Rate limited by server. Retry after " + retryAfter.getSeconds() + " seconds"
         : "Rate limited by server";
@@ -641,30 +645,38 @@ public final class OAuth2TokenManager implements TokenProvider {
   }
 
   /**
-   * Parses a Retry-After header value into a Duration. Accepts either
-   * delay-seconds (e.g. "120") or an HTTP-date in IMF-fixdate format
-   * (e.g. "Fri, 31 Dec 1999 23:59:59 GMT") per RFC 7231 §7.1.3.
-   * Returns null if the header is absent or unparseable.
+   * Parses the Retry-After header into a Duration, clamped to
+   * {@code [0, MAX_RETRY_AFTER]}. Accepts either delay-seconds (e.g. "120") or an
+   * HTTP-date; OkHttp's header parser handles all three HTTP date formats (RFC 1123,
+   * RFC 850, and asctime) per RFC 9110 §5.6.7. Returns null if the header is absent
+   * or unparseable. Clamping prevents an overflow in {@link Instant#plus} from a huge
+   * value and a negative cooldown from a past date.
    */
-  private Duration parseRetryAfter(String retryAfterHeader) {
-    if (retryAfterHeader == null) {
+  Duration parseRetryAfter(Response response) {
+    String header = response.header("Retry-After");
+    if (header == null) {
       return null;
     }
-    String trimmed = retryAfterHeader.trim();
+    String trimmed = header.trim();
     try {
-      return Duration.ofSeconds(Long.parseLong(trimmed));
+      return clampRetryAfter(Duration.ofSeconds(Long.parseLong(trimmed)));
     } catch (NumberFormatException e) {
-      // Not an integer — try HTTP-date
+      // Not delay-seconds — fall through to HTTP-date parsing.
     }
-    try {
-      Instant retryAt = java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME
-          .parse(trimmed, Instant::from);
-      Duration delta = Duration.between(clock.instant(), retryAt);
-      return delta.isNegative() ? Duration.ZERO : delta;
-    } catch (java.time.format.DateTimeParseException e) {
+    Instant retryAt = response.headers().getInstant("Retry-After");
+    if (retryAt == null) {
       log.warn("Unparseable Retry-After header: '{}'", trimmed);
       return null;
     }
+    return clampRetryAfter(Duration.between(clock.instant(), retryAt));
+  }
+
+  /** Clamps a Retry-After duration to {@code [0, MAX_RETRY_AFTER]}. */
+  private static Duration clampRetryAfter(Duration retryAfter) {
+    if (retryAfter.isNegative()) {
+      return Duration.ZERO;
+    }
+    return retryAfter.compareTo(MAX_RETRY_AFTER) > 0 ? MAX_RETRY_AFTER : retryAfter;
   }
 
   /**
@@ -694,7 +706,10 @@ public final class OAuth2TokenManager implements TokenProvider {
    */
   private String readBodyWithLimit(ResponseBody body) throws IOException {
     try (BufferedSource source = body.source()) {
-      source.request(MAX_RESPONSE_BODY_BYTES);
+      // Request one byte past the cap so an oversized body is reliably detected:
+      // request(MAX) can stop exactly at MAX on an okio segment boundary, which
+      // would leave `available == MAX` and suppress the truncation warning.
+      source.request(MAX_RESPONSE_BODY_BYTES + 1);
       long available = source.getBuffer().size();
       if (available > MAX_RESPONSE_BODY_BYTES) {
         log.warn("Response body exceeded {} bytes, truncated", MAX_RESPONSE_BODY_BYTES);
@@ -714,7 +729,7 @@ public final class OAuth2TokenManager implements TokenProvider {
       throw new ServiceUnavailableException("Empty response body from server");
     }
     try {
-      return objectMapper.readTree(responseBody);
+      return OBJECT_MAPPER.readTree(responseBody);
     } catch (IOException e) {
       log.error("Failed to parse token response as JSON for client {}", config.getClientId(), e);
       throw new ServiceUnavailableException("Malformed JSON response", e);
@@ -727,18 +742,18 @@ public final class OAuth2TokenManager implements TokenProvider {
    */
   private void validateTokenFields(JsonNode node) {
     JsonNode accessTokenNode = node.get("access_token");
-    if (accessTokenNode == null || accessTokenNode.asText().isBlank()) {
+    if (accessTokenNode == null || accessTokenNode.isNull() || accessTokenNode.asText().isBlank()) {
       log.error("Token response missing 'access_token' for client {}", config.getClientId());
       throw new ServiceUnavailableException("Missing access_token in response");
     }
 
-    JsonNode expiresInNode = node.get("expires_in");
-    if (expiresInNode == null || !expiresInNode.canConvertToLong()) {
+    Long expiresInValue = extractExpiresIn(node.get("expires_in"));
+    if (expiresInValue == null) {
       log.error("Token response missing or invalid 'expires_in' for client {}", config.getClientId());
       throw new ServiceUnavailableException("Missing or invalid expires_in in response");
     }
 
-    long expiresIn = expiresInNode.asLong();
+    long expiresIn = expiresInValue;
     if (expiresIn <= 0) {
       log.error("Token response has non-positive 'expires_in' ({}) for client {}",
           expiresIn, config.getClientId());
@@ -754,11 +769,47 @@ public final class OAuth2TokenManager implements TokenProvider {
   }
 
   /**
+   * Extracts {@code expires_in} as a long, accepting both a JSON number and a numeric
+   * string (some authorization servers quote the value). Returns null if the node is
+   * absent or not a parseable integer.
+   */
+  static Long extractExpiresIn(JsonNode node) {
+    if (node == null) {
+      return null;
+    }
+    if (node.canConvertToLong()) {
+      return node.asLong();
+    }
+    if (node.isTextual()) {
+      try {
+        return Long.parseLong(node.asText().trim());
+      } catch (NumberFormatException e) {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Splits a whitespace-separated scope string into a set of distinct, non-blank
+   * tokens. Returns an empty set for a null or blank input. Deduplicating here
+   * (rather than via {@code Set.of}) avoids throwing on a repeated scope token.
+   */
+  static Set<String> parseScopes(String raw) {
+    if (raw == null || raw.isBlank()) {
+      return Set.of();
+    }
+    return Arrays.stream(raw.trim().split("\\s+"))
+        .filter(s -> !s.isEmpty())
+        .collect(Collectors.toUnmodifiableSet());
+  }
+
+  /**
    * Creates an OAuth2Token from the validated JsonNode.
    */
   private OAuth2Token createOAuth2TokenFromNode(JsonNode node) {
     String accessToken = node.get("access_token").asText();
-    long expiresIn = node.get("expires_in").asLong();
+    long expiresIn = extractExpiresIn(node.get("expires_in"));
 
     JsonNode tokenTypeNode = node.get("token_type");
     OAuth2TokenType tokenType = (tokenTypeNode != null && !tokenTypeNode.asText().isBlank())
@@ -767,8 +818,8 @@ public final class OAuth2TokenManager implements TokenProvider {
 
     Set<String> scopes = Set.of();
     JsonNode scopeNode = node.get("scope");
-    if (scopeNode != null && !scopeNode.asText().isBlank()) {
-      scopes = Set.of(scopeNode.asText().split("\\s+"));
+    if (scopeNode != null) {
+      scopes = parseScopes(scopeNode.asText());
     }
 
     if (expiresIn <= config.getRefreshThreshold().getSeconds()
@@ -798,6 +849,8 @@ public final class OAuth2TokenManager implements TokenProvider {
     var cbConfig =
         CircuitBreakerConfig.custom()
             .failureRateThreshold(FAILURE_THRESHOLD)
+            .slidingWindowType(CircuitBreakerConfig.SlidingWindowType.COUNT_BASED)
+            .slidingWindowSize(config.getCircuitBreakerMinimumCalls())
             .minimumNumberOfCalls(config.getCircuitBreakerMinimumCalls())
             .waitDurationInOpenState(config.getCircuitBreakerWaitDuration())
             .permittedNumberOfCallsInHalfOpenState(HALF_OPEN_CALLS)
@@ -855,7 +908,8 @@ public final class OAuth2TokenManager implements TokenProvider {
 
     retry.getEventPublisher()
         .onRetry(event -> log.info("Retrying token refresh after failure: {}", event))
-        .onError(event -> log.error("Retry failed: {}", event));
+        .onError(event -> log.error("Retry failed after {} attempts",
+            event.getNumberOfRetryAttempts(), event.getLastThrowable()));
 
     return retry;
   }
@@ -866,7 +920,6 @@ public final class OAuth2TokenManager implements TokenProvider {
    * @param event The state transition event.
    */
   private void logCircuitBreakerStateTransition(CircuitBreakerOnStateTransitionEvent event) {
-    State fromState = event.getStateTransition().getFromState();
     State toState = event.getStateTransition().getToState();
 
     String transitionMessage =
@@ -953,6 +1006,15 @@ public final class OAuth2TokenManager implements TokenProvider {
       refreshLock.unlock();
     }
 
+    // Abort in-flight HTTP calls before awaiting the executor, but only for a
+    // client we created. CompletableFuture.cancel(true) does not interrupt the
+    // running supplyAsync task, so without this the executor await would block on
+    // a slow/hung request. A caller-supplied client is the caller's to manage.
+    boolean ownsHttpClient = config.getHttpClient() == null;
+    if (ownsHttpClient) {
+      httpClient.dispatcher().cancelAll();
+    }
+
     // Shutdown executor gracefully
     executor.shutdown();
     try {
@@ -967,9 +1029,8 @@ public final class OAuth2TokenManager implements TokenProvider {
       Thread.currentThread().interrupt();
     }
 
-    // Close HTTP resources only if we created the client
-    if (httpClient != null && config.getHttpClient() == null) {
-      httpClient.dispatcher().cancelAll();
+    // Release remaining HTTP resources only if we created the client
+    if (ownsHttpClient) {
       httpClient.dispatcher().executorService().shutdown();
       httpClient.connectionPool().evictAll();
     }

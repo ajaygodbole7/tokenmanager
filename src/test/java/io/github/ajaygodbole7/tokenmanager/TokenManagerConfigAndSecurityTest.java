@@ -77,7 +77,7 @@ class TokenManagerConfigAndSecurityTest extends AbstractMockServerTest {
         .build()
         .validate())
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessage("tokenEndpoint must use HTTPS");
+        .hasMessage("tokenEndpoint must be a valid HTTPS URL");
   }
 
   @Test
@@ -239,7 +239,22 @@ class TokenManagerConfigAndSecurityTest extends AbstractMockServerTest {
         .build()
         .validate())
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessage("maxRetryAttempts must be >= 1");
+        .hasMessage("maxRetryAttempts must be between 1 and 10");
+  }
+
+  @Test
+  void shouldRejectMaxRetryAttemptsAboveCeiling() {
+    // Beyond the ceiling, computeOverallTimeout()'s exponential backoff sum
+    // overflows a long and produces a negative synchronous-call timeout.
+    assertThatThrownBy(() -> TokenConfig.builder()
+        .tokenEndpoint("https://auth.example.com/oauth/token")
+        .clientId("client")
+        .clientSecret("secret")
+        .maxRetryAttempts(11)
+        .build()
+        .validate())
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("maxRetryAttempts must be between 1 and 10");
   }
 
   @Test
@@ -370,15 +385,17 @@ class TokenManagerConfigAndSecurityTest extends AbstractMockServerTest {
         .clientId("my-client")
         .clientSecret("super-secret-value")
         .grantType(OAuth2GrantType.PASSWORD)
-        .username("user")
+        .username("alice@example.com")
         .password("hunter2")
         .build();
 
     String str = config.toString();
     assertThat(str).contains("my-client");
-    assertThat(str).contains("user");
     assertThat(str).doesNotContain("super-secret-value");
     assertThat(str).doesNotContain("hunter2");
+    // The resource-owner username is end-user PII (half of the password-grant
+    // credential pair), so it is excluded from toString like the secrets.
+    assertThat(str).doesNotContain("alice@example.com");
   }
 
   @Test

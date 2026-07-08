@@ -998,7 +998,7 @@ class TokenManagerResilienceTest extends AbstractMockServerTest {
       int requestCountAfterOpen = mockWebServer.getRequestCount();
       assertThatThrownBy(cbManager::getToken)
           .isInstanceOf(ServiceUnavailableException.class)
-          .hasMessageContaining("Service unavailable");
+          .hasMessageContaining("Circuit breaker is open");
       assertThat(mockWebServer.getRequestCount()).isEqualTo(requestCountAfterOpen);
     } finally {
       cbManager.close();

@@ -211,6 +211,56 @@ class TokenManagerIT {
     }
 
     @Test
+    void shouldExerciseFullTokenLifecycleAgainstKeycloak() throws Exception {
+        // One end-to-end pass through the manager's lifecycle against real Keycloak:
+        // cold fetch -> cache hit -> proactive refresh after expiry -> invalidate-forced
+        // exchange -> async cache hit -> close -> post-close rejection.
+        MutableClock clock = new MutableClock(Instant.now());
+
+        TokenConfig config = TokenConfig.builder()
+                .tokenEndpoint(KeycloakTestSupport.TOKEN_ENDPOINT)
+                .clientId(KeycloakTestSupport.SERVICE_CLIENT_ID)
+                .clientSecret(KeycloakTestSupport.SERVICE_CLIENT_SECRET)
+                .grantType(OAuth2GrantType.CLIENT_CREDENTIALS)
+                .refreshThreshold(Duration.ofSeconds(5))
+                .clock(clock)
+                .httpClient(KeycloakTestSupport.HTTP_CLIENT)
+                .build();
+
+        OAuth2TokenManager manager = new OAuth2TokenManager(config);
+        try {
+            // 1. Cold fetch — a real JWT issued by the realm.
+            String initial = manager.getToken();
+            assertThat(initial).isNotNull().contains(".");
+
+            // 2. Cache hit — the same token, no server round-trip.
+            assertThat(manager.getToken()).isEqualTo(initial);
+
+            // 3. Proactive refresh once the clock passes expiry + threshold.
+            clock.advance(Duration.ofSeconds(
+                    KeycloakTestSupport.REALM_TOKEN_LIFETIME_SECONDS + 6));
+            String refreshed = manager.getToken();
+            assertThat(refreshed).isNotNull().isNotEqualTo(initial);
+
+            // 4. invalidate() forces a fresh exchange even though the token is still valid.
+            manager.invalidate();
+            String afterInvalidate = manager.getToken();
+            assertThat(afterInvalidate).isNotNull().isNotEqualTo(refreshed);
+
+            // 5. The async path serves the freshly cached token.
+            assertThat(manager.getTokenAsync().get()).isEqualTo(afterInvalidate);
+
+            // 6. After close(), further calls are rejected on both APIs.
+            manager.close();
+            assertThatThrownBy(manager::getToken)
+                    .isInstanceOf(IllegalStateException.class);
+            assertThat(manager.getTokenAsync()).isCompletedExceptionally();
+        } finally {
+            manager.close();
+        }
+    }
+
+    @Test
     void shouldWorkWithClientSecretBasic() {
         // CLIENT_SECRET_BASIC sends credentials in the Authorization header and obtains a token
         TokenConfig config = TokenConfig.builder()
@@ -326,6 +376,77 @@ class TokenManagerIT {
             } finally {
                 KeycloakTestSupport.unpauseKeycloak();
             }
+        }
+    }
+
+    @Test
+    void shouldRecoverCircuitBreakerAfterKeycloakOutageEnds() throws Exception {
+        // End-to-end proof of circuit breaker OPEN -> HALF_OPEN -> CLOSED recovery
+        // against a real Keycloak instance (not just MockWebServer).
+        OkHttpClient shortTimeoutClient =
+                KeycloakTestSupport.createTrustAllClient(Duration.ofSeconds(2));
+
+        TokenConfig config = TokenConfig.builder()
+                .tokenEndpoint(KeycloakTestSupport.TOKEN_ENDPOINT)
+                .clientId(KeycloakTestSupport.SERVICE_CLIENT_ID)
+                .clientSecret(KeycloakTestSupport.SERVICE_CLIENT_SECRET)
+                .grantType(OAuth2GrantType.CLIENT_CREDENTIALS)
+                .httpClient(shortTimeoutClient)
+                .httpTimeout(Duration.ofSeconds(2))
+                .maxRetryAttempts(1)
+                .circuitBreakerMinimumCalls(2)
+                .circuitBreakerWaitDuration(Duration.ofSeconds(3))
+                .build();
+
+        try (var manager = new OAuth2TokenManager(config)) {
+            // Warm-up: prove connectivity and seed one success before the outage,
+            // exercising the "prior success then consecutive failures still opens
+            // the breaker" path (the sliding-window fix — see OAuth2TokenManager
+            // createCircuitBreaker()).
+            String warmup = manager.getToken();
+            assertThat(warmup).isNotNull();
+
+            // The warmed-up token is still well within its validity window (realm
+            // lifetime 60s), so without invalidating it the calls below would be
+            // served from cache with no network round-trip at all, never touching
+            // the paused server. invalidate() forces every subsequent getToken()
+            // call to actually attempt a refresh.
+            manager.invalidate();
+
+            KeycloakTestSupport.pauseKeycloak();
+            try {
+                // Two consecutive failures (blocked by the 2s read timeout while
+                // the container is frozen) fill the sliding window and open the
+                // circuit breaker.
+                for (int i = 0; i < 2; i++) {
+                    assertThatThrownBy(manager::getToken)
+                            .isInstanceOf(ServiceUnavailableException.class);
+                }
+
+                // A third call while still paused must fast-fail — proof the
+                // breaker is OPEN and short-circuiting rather than attempting
+                // another network call and waiting out the read timeout.
+                long start = System.nanoTime();
+                assertThatThrownBy(manager::getToken)
+                        .isInstanceOf(ServiceUnavailableException.class);
+                long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+                assertThat(elapsedMs)
+                        .as("Open breaker should fast-fail without waiting on the network")
+                        .isLessThan(500);
+
+                // Wait out the circuit breaker's open-state window.
+                Thread.sleep(3500);
+            } finally {
+                KeycloakTestSupport.unpauseKeycloak();
+            }
+
+            // Keycloak is unpaused (guaranteed by the finally block above,
+            // regardless of whether any assertion above failed). The breaker
+            // should now recover: a probe call reaches the real server again
+            // and succeeds, proving the OPEN -> HALF_OPEN -> CLOSED transition
+            // against a live Keycloak instance.
+            String recovered = manager.getToken();
+            assertThat(recovered).isNotNull();
         }
     }
 }

@@ -23,6 +23,7 @@ import okhttp3.mockwebserver.RecordedRequest;
 import org.junit.jupiter.api.Test;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.concurrent.atomic.AtomicInteger;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -428,6 +429,74 @@ class TokenManagerCoreTest extends AbstractMockServerTest {
   }
 
   @Test
+  void shouldSendCorrectJwtBearerRequestShapeAndRefreshAssertionPerCall() throws Exception {
+    AtomicInteger assertionCounter = new AtomicInteger(0);
+    MutableClock clock = new MutableClock(Instant.now());
+
+    TokenConfig jwtConfig = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("jwt-refresh-client-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .grantType(OAuth2GrantType.JWT_BEARER)
+        .assertionSupplier(() -> "assertion-" + assertionCounter.incrementAndGet())
+        .httpTimeout(HTTP_TIMEOUT)
+        .refreshThreshold(Duration.ofSeconds(50))
+        .clock(clock)
+        .httpClient(httpClient)
+        .build();
+
+    OAuth2TokenManager jwtManager = new OAuth2TokenManager(jwtConfig);
+
+    try {
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(200)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {
+                  "access_token": "jwt-token-1",
+                  "token_type": "Bearer",
+                  "expires_in": 60
+              }
+              """));
+
+      String firstToken = jwtManager.getToken();
+      assertThat(firstToken).isEqualTo("jwt-token-1");
+
+      RecordedRequest firstRequest = mockWebServer.takeRequest();
+      String firstBody = firstRequest.getBody().readUtf8();
+      assertThat(firstBody).contains(
+          "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer");
+      assertThat(firstBody).contains("assertion=assertion-1");
+
+      // Advance past expiry (60s) + threshold (50s) to force a real second refresh.
+      clock.advance(Duration.ofSeconds(115));
+
+      mockWebServer.enqueue(new MockResponse()
+          .setResponseCode(200)
+          .addHeader(CONTENT_TYPE_HEADER, CONTENT_TYPE_JSON)
+          .setBody("""
+              {
+                  "access_token": "jwt-token-2",
+                  "token_type": "Bearer",
+                  "expires_in": 60
+              }
+              """));
+
+      String secondToken = jwtManager.getToken();
+      assertThat(secondToken).isEqualTo("jwt-token-2");
+
+      RecordedRequest secondRequest = mockWebServer.takeRequest();
+      String secondBody = secondRequest.getBody().readUtf8();
+      assertThat(secondBody).contains(
+          "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer");
+      // The supplier is invoked fresh on every refresh, not cached from the first call.
+      assertThat(secondBody).contains("assertion=assertion-2");
+    } finally {
+      jwtManager.close();
+    }
+  }
+
+  @Test
   void shouldSendAuthorizationCodeParamsInRequestBody() throws Exception {
     TokenConfig authCodeConfig = TokenConfig.builder()
         .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
@@ -621,7 +690,12 @@ class TokenManagerCoreTest extends AbstractMockServerTest {
       String decoded = new String(
           java.util.Base64.getDecoder().decode(authHeader.substring(6)),
           java.nio.charset.StandardCharsets.UTF_8);
-      assertThat(decoded).isEqualTo("client:with:colons:secret/with+special=chars");
+      // RFC 6749 §2.3.1: client_id and client_secret are form-urlencoded before
+      // Basic encoding, so the ':' in the client_id no longer collides with the
+      // credential separator and a compliant server recovers the originals by
+      // percent-decoding each half.
+      assertThat(decoded)
+          .isEqualTo("client%3Awith%3Acolons:secret%2Fwith%2Bspecial%3Dchars");
     } finally {
       specialManager.close();
     }

@@ -73,8 +73,11 @@
 
     <!-- Test dependencies -->
     <junit.version>5.11.3</junit.version>
+    <junit-platform.version>1.11.3</junit-platform.version>
     <assertj.version>3.27.7</assertj.version>
     <testcontainers-keycloak.version>4.1.1</testcontainers-keycloak.version>
+    <jqwik.version>1.9.2</jqwik.version>
+    <archunit.version>1.3.0</archunit.version>
   </properties>
 
   <dependencies>
@@ -166,6 +169,28 @@
       <version>${testcontainers-keycloak.version}</version>
       <scope>test</scope>
     </dependency>
+    <!-- Property-based testing for parsing/validation edge cases -->
+    <dependency>
+      <groupId>net.jqwik</groupId>
+      <artifactId>jqwik</artifactId>
+      <version>${jqwik.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <!-- Architecture rules (exception hierarchy, package boundaries) -->
+    <dependency>
+      <groupId>com.tngtech.archunit</groupId>
+      <artifactId>archunit-junit5</artifactId>
+      <version>${archunit.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <!-- Ensures Surefire's JUnit Platform launcher can run the jqwik test engine
+         alongside the JUnit Jupiter engine in the same test run. -->
+    <dependency>
+      <groupId>org.junit.platform</groupId>
+      <artifactId>junit-platform-launcher</artifactId>
+      <version>${junit-platform.version}</version>
+      <scope>test</scope>
+    </dependency>
 
   </dependencies>
 
@@ -214,6 +239,33 @@
             <disable>false</disable>
           </consoleOutputReporter>
         </configuration>
+      </plugin>
+
+      <!-- Mutation Testing Plugin (manual: mvn org.pitest:pitest-maven:mutationCoverage) -->
+      <plugin>
+        <groupId>org.pitest</groupId>
+        <artifactId>pitest-maven</artifactId>
+        <version>1.17.4</version>
+        <configuration>
+          <targetClasses>
+            <param>io.github.ajaygodbole7.tokenmanager.*</param>
+          </targetClasses>
+          <targetTests>
+            <param>io.github.ajaygodbole7.tokenmanager.*Test</param>
+          </targetTests>
+          <excludedClasses>
+            <param>io.github.ajaygodbole7.tokenmanager.*IT</param>
+          </excludedClasses>
+          <mutationThreshold>0</mutationThreshold>
+          <timestampedReports>false</timestampedReports>
+        </configuration>
+        <dependencies>
+          <dependency>
+            <groupId>org.pitest</groupId>
+            <artifactId>pitest-junit5-plugin</artifactId>
+            <version>1.2.1</version>
+          </dependency>
+        </dependencies>
       </plugin>
 
       <!-- Integration Testing Plugin -->

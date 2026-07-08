@@ -59,6 +59,11 @@ out/
 ######################
 /log/
 /target/
+
+######################
+# jqwik property-test run history
+######################
+.jqwik-database
 pom.xml.tag
 pom.xml.releaseBackup
 pom.xml.versionsBackup

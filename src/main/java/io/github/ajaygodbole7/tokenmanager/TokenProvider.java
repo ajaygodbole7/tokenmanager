@@ -34,12 +34,14 @@ public interface TokenProvider extends AutoCloseable {
      *
      * @return a valid access token string
      * @throws TokenException if the token cannot be obtained
+     * @throws IllegalStateException if the provider has been closed
      */
     String getToken();
 
     /**
      * Returns a future that completes with a valid access token, refreshing if necessary.
-     * The future completes exceptionally with a {@link TokenException} subclass on failure.
+     * The future completes exceptionally with a {@link TokenException} subclass on failure,
+     * or with an {@link IllegalStateException} if the provider has been closed.
      *
      * <p>Cache hits return an already-completed future. Refresh operations chain onto
      * the internal refresh future without blocking the calling thread.

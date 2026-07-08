@@ -15,7 +15,6 @@
  */
 package io.github.ajaygodbole7.tokenmanager;
 
-import java.net.URI;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.Collections;
@@ -26,12 +25,13 @@ import lombok.Builder.Default;
 import lombok.NonNull;
 import lombok.ToString;
 import lombok.Value;
+import okhttp3.HttpUrl;
 import okhttp3.OkHttpClient;
 
 @Value
 @Builder
 @ToString(exclude = {
-    "clientSecretSupplier", "password", "authorizationCode",
+    "clientSecretSupplier", "username", "password", "authorizationCode",
     "codeVerifier", "refreshToken", "assertionSupplier"
 })
 public class TokenConfig {
@@ -40,6 +40,7 @@ public class TokenConfig {
   private static final Duration DEFAULT_HTTP_TIMEOUT = Duration.ofSeconds(10);
   // How long before token expiry should we refresh
   private static final Duration DEFAULT_REFRESH_THRESHOLD = Duration.ofSeconds(30);
+  private static final int MAX_RETRY_ATTEMPTS_CEILING = 10;
 
   @NonNull String tokenEndpoint;
   @NonNull String clientId;
@@ -65,6 +66,14 @@ public class TokenConfig {
 
   @NonNull @Default ClientAuthMethod clientAuthMethod = ClientAuthMethod.CLIENT_SECRET_POST;
 
+  /**
+   * Maximum number of retry attempts on transient failures. Capped at
+   * {@value #MAX_RETRY_ATTEMPTS_CEILING} by {@link #validate()}: beyond that, the
+   * exponential backoff schedule in
+   * {@link OAuth2TokenManager#computeOverallTimeout()} overflows a {@code long}
+   * millisecond total, producing a negative synchronous-call timeout that fails
+   * {@link OAuth2TokenManager#getToken()} instantly regardless of server health.
+   */
   @Default int maxRetryAttempts = 3;
   @NonNull @Default Duration initialRetryDelay = Duration.ofSeconds(1);
   /**
@@ -146,8 +155,9 @@ public class TokenConfig {
     if (httpTimeout.isNegative() || httpTimeout.isZero()) {
       throw new IllegalArgumentException("httpTimeout must be positive");
     }
-    if (maxRetryAttempts < 1) {
-      throw new IllegalArgumentException("maxRetryAttempts must be >= 1");
+    if (maxRetryAttempts < 1 || maxRetryAttempts > MAX_RETRY_ATTEMPTS_CEILING) {
+      throw new IllegalArgumentException(
+          "maxRetryAttempts must be between 1 and " + MAX_RETRY_ATTEMPTS_CEILING);
     }
     if (initialRetryDelay.isNegative() || initialRetryDelay.isZero()) {
       throw new IllegalArgumentException("initialRetryDelay must be positive");
@@ -158,9 +168,12 @@ public class TokenConfig {
     if (circuitBreakerWaitDuration.isNegative() || circuitBreakerWaitDuration.isZero()) {
       throw new IllegalArgumentException("circuitBreakerWaitDuration must be positive");
     }
-    URI uri = URI.create(tokenEndpoint);
-    if (!"https".equalsIgnoreCase(uri.getScheme())) {
-      throw new IllegalArgumentException("tokenEndpoint must use HTTPS");
+    // Parse with the same parser the HTTP call uses, so an endpoint that passes
+    // validation is guaranteed to be usable by OkHttp (a scheme-only check would
+    // accept host-less URLs like "https://" that fail later at request time).
+    HttpUrl parsedEndpoint = HttpUrl.parse(tokenEndpoint);
+    if (parsedEndpoint == null || !parsedEndpoint.isHttps()) {
+      throw new IllegalArgumentException("tokenEndpoint must be a valid HTTPS URL");
     }
 
     // Validate based on grant type
