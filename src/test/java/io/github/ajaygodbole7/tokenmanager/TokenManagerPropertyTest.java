@@ -17,8 +17,8 @@ package io.github.ajaygodbole7.tokenmanager;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.JsonNodeFactory;
 import java.time.Duration;
 import net.jqwik.api.Arbitraries;
 import net.jqwik.api.Arbitrary;

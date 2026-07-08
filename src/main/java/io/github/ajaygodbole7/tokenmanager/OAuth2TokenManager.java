@@ -15,8 +15,9 @@
  */
 package io.github.ajaygodbole7.tokenmanager;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker.Metrics;
@@ -730,7 +731,7 @@ public final class OAuth2TokenManager implements TokenProvider {
     }
     try {
       return OBJECT_MAPPER.readTree(responseBody);
-    } catch (IOException e) {
+    } catch (JacksonException e) {
       log.error("Failed to parse token response as JSON for client {}", config.getClientId(), e);
       throw new ServiceUnavailableException("Malformed JSON response", e);
     }

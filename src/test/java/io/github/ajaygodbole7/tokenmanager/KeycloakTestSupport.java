@@ -15,8 +15,8 @@
  */
 package io.github.ajaygodbole7.tokenmanager;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import dasniko.testcontainers.keycloak.KeycloakContainer;
 import java.io.IOException;
 import java.security.KeyManagementException;
