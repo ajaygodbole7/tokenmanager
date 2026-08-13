@@ -430,6 +430,8 @@ class TokenManagerErrorClassificationTest extends AbstractMockServerTest {
         .connectTimeout(Duration.ofSeconds(5))
         .readTimeout(Duration.ofSeconds(5))
         .writeTimeout(Duration.ofSeconds(5))
+        .followRedirects(false)
+        .followSslRedirects(false)
         .build();
 
     try {

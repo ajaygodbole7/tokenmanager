@@ -151,6 +151,11 @@ TokenConfig.builder()
 
 If you provide your own client, you own its lifecycle. TokenManager will not close it.
 
+A custom client must be built with `followRedirects(false)` and `followSslRedirects(false)`;
+configuration validation rejects it otherwise. The token request carries the client secret
+(or assertion) in its form body, which OkHttp would replay to another host on a 307/308
+redirect.
+
 ## Spring Boot
 
 Register as a bean. Spring calls `close()` on shutdown.

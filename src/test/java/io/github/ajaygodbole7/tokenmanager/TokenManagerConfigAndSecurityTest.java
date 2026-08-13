@@ -345,6 +345,44 @@ class TokenManagerConfigAndSecurityTest extends AbstractMockServerTest {
   // --- Redirect tests ---
 
   @Test
+  void shouldRejectCustomHttpClientThatFollowsRedirects() {
+    // A redirect-following client would replay the credential-bearing form body
+    // to the Location host on a 307/308, so validate() must refuse it.
+    OkHttpClient redirectingClient = httpClient.newBuilder()
+        .followRedirects(true)
+        .build();
+
+    TokenConfig config = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("redirecting-client-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpClient(redirectingClient)
+        .build();
+
+    assertThatThrownBy(config::validate)
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("followRedirects");
+  }
+
+  @Test
+  void shouldRejectCustomHttpClientThatFollowsSslRedirects() {
+    OkHttpClient sslRedirectingClient = httpClient.newBuilder()
+        .followSslRedirects(true)
+        .build();
+
+    TokenConfig config = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("ssl-redirecting-client-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpClient(sslRedirectingClient)
+        .build();
+
+    assertThatThrownBy(config::validate)
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("followSslRedirects");
+  }
+
+  @Test
   void shouldNotFollowRedirects() throws Exception {
     // Verifies that a 302 redirect is treated as an error, not followed.
     // A redirect from a token endpoint could send credentials to an untrusted host.
@@ -455,7 +493,10 @@ class TokenManagerConfigAndSecurityTest extends AbstractMockServerTest {
 
   @Test
   void shouldNotCloseUserProvidedHttpClient() {
-    OkHttpClient customClient = new OkHttpClient.Builder().build();
+    OkHttpClient customClient = new OkHttpClient.Builder()
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .build();
     String endpoint = mockWebServer.url("/token").toString();
 
     TokenConfig config = TokenConfig.builder()

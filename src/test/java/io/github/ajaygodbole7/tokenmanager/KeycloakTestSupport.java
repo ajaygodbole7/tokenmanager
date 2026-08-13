@@ -125,6 +125,8 @@ final class KeycloakTestSupport {
                     .connectTimeout(timeout)
                     .readTimeout(timeout)
                     .writeTimeout(timeout)
+                    .followRedirects(false)
+                    .followSslRedirects(false)
                     .build();
         } catch (NoSuchAlgorithmException | KeyManagementException e) {
             throw new RuntimeException("Failed to create trust-all OkHttpClient", e);

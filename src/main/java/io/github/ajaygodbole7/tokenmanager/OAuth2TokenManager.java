@@ -455,6 +455,14 @@ public final class OAuth2TokenManager implements TokenProvider {
   private CompletableFuture<OAuth2Token> startNewRefresh() {
     try {
       Supplier<OAuth2Token> supplier = () -> {
+        // Re-checked on every retry attempt, not just the first: close() aborts
+        // an in-flight call via dispatcher().cancelAll(), but the resulting
+        // "Canceled" IOException matches the retry predicate, and the next
+        // attempt would dispatch a brand-new HTTP call that cancelAll() never
+        // covered. This check makes the retry loop stop at the closed flag.
+        if (closed.get()) {
+          throw new ServiceUnavailableException("Token manager is closed");
+        }
         try {
           return requestNewToken();
         } catch (IOException e) {
@@ -986,9 +994,12 @@ public final class OAuth2TokenManager implements TokenProvider {
    * Closes the Token Manager, releasing resources and cancelling any ongoing refresh.
    * This ensures a clean shutdown scenario.
    *
-   * <p>If an HTTP request is in-flight when close() is called, this method may block
-   * until the request completes or the configured httpTimeout fires, plus up to
-   * 5 additional seconds for executor termination.
+   * <p>If an HTTP request is in-flight when close() is called, the request is
+   * aborted (for an internally-created client) and any pending retry attempts are
+   * short-circuited, so this method may block for the retry backoff in progress
+   * plus up to 5 additional seconds for executor termination. For a
+   * caller-supplied client the in-flight request is not aborted and may run until
+   * that client's own timeout fires.
    */
   @Override
   public void close() {

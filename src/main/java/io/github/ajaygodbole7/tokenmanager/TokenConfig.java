@@ -106,6 +106,11 @@ public class TokenConfig {
    * {@code httpTimeout}, {@code getToken()} may time out while the HTTP call is
    * still in flight. Set {@code httpTimeout} to match or exceed the custom
    * client's effective timeout.
+   *
+   * <p>A custom client must be built with {@code followRedirects(false)} and
+   * {@code followSslRedirects(false)} — enforced by {@link #validate()}. The token
+   * request carries the client secret (or assertion) in its form body, which
+   * OkHttp would replay to another host on a 307/308 redirect.
    */
   OkHttpClient httpClient;
 
@@ -174,6 +179,17 @@ public class TokenConfig {
     HttpUrl parsedEndpoint = HttpUrl.parse(tokenEndpoint);
     if (parsedEndpoint == null || !parsedEndpoint.isHttps()) {
       throw new IllegalArgumentException("tokenEndpoint must be a valid HTTPS URL");
+    }
+
+    // The token request carries credentials in its form body, and OkHttp replays
+    // the body on a 307/308 redirect (only the Authorization header is stripped
+    // cross-host) — a redirect from a compromised endpoint would leak them to the
+    // Location host. The internally-created client already disables both flags;
+    // a caller-supplied client must too.
+    if (httpClient != null && (httpClient.followRedirects() || httpClient.followSslRedirects())) {
+      throw new IllegalArgumentException(
+          "Custom httpClient must disable followRedirects and followSslRedirects: "
+              + "redirects can replay the credential-bearing token request to another host");
     }
 
     // Validate based on grant type

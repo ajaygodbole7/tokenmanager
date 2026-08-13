@@ -24,9 +24,13 @@ import java.security.KeyStore;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import okhttp3.mockwebserver.Dispatcher;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
+import okhttp3.mockwebserver.RecordedRequest;
 import okhttp3.mockwebserver.SocketPolicy;
 import okhttp3.tls.HandshakeCertificates;
 import okhttp3.tls.HeldCertificate;
@@ -73,6 +77,63 @@ class TokenManagerTimeoutAndLifecycleTest extends AbstractMockServerTest {
             .as("close() should cancel the in-flight call instead of awaiting its httpTimeout")
             .isLessThan(2000);
       } finally {
+        manager.close();
+      }
+    }
+  }
+
+  @Test
+  void closeShouldNotDispatchRetryAttemptsAfterCancellingInFlightCall() throws Exception {
+    try (TrustedOwnedServer owned = TrustedOwnedServer.start()) {
+      // Counts every request and hangs, so the first attempt is guaranteed to be
+      // in-flight when close() runs. cancelAll() aborts it with a "Canceled"
+      // IOException, which matches the retry predicate — without the closed-flag
+      // short-circuit in the refresh supplier, the retry loop would dispatch a
+      // brand-new request (never covered by cancelAll()) after close() returned.
+      CountDownLatch firstRequestArrived = new CountDownLatch(1);
+      // Released in the finally block so the dispatcher thread unblocks and the
+      // server can shut down (a plain long sleep would hang server.shutdown()).
+      CountDownLatch releaseServer = new CountDownLatch(1);
+      AtomicInteger requestCount = new AtomicInteger();
+      owned.server.setDispatcher(new Dispatcher() {
+        @Override
+        public MockResponse dispatch(RecordedRequest request) throws InterruptedException {
+          requestCount.incrementAndGet();
+          firstRequestArrived.countDown();
+          releaseServer.await(10, TimeUnit.SECONDS);
+          return new MockResponse().setResponseCode(500);
+        }
+      });
+
+      TokenConfig config = TokenConfig.builder()
+          .tokenEndpoint(owned.endpoint(TOKEN_ENDPOINT))
+          .clientId("close-no-retry-" + UUID.randomUUID())
+          .clientSecret("test-secret")
+          .httpTimeout(Duration.ofSeconds(20))
+          .maxRetryAttempts(3)
+          .initialRetryDelay(Duration.ofMillis(100))
+          .refreshThreshold(REFRESH_THRESHOLD)
+          .build();
+
+      OAuth2TokenManager manager = new OAuth2TokenManager(config);
+      try {
+        var future = manager.getTokenAsync();
+        assertThat(firstRequestArrived.await(5, TimeUnit.SECONDS))
+            .as("first refresh attempt should reach the server before close()")
+            .isTrue();
+
+        manager.close();
+
+        // Longer than the full backoff schedule (100ms * 1.5 + 200ms * 1.5 at
+        // maximum jitter) — if the retry loop were still alive it would have
+        // dispatched attempts 2 and 3 by now.
+        Thread.sleep(1500);
+        assertThat(requestCount.get())
+            .as("no retry attempt may dispatch a new HTTP request after close()")
+            .isEqualTo(1);
+        assertThat(future.isCompletedExceptionally()).isTrue();
+      } finally {
+        releaseServer.countDown();
         manager.close();
       }
     }
