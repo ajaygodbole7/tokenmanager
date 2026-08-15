@@ -338,10 +338,16 @@ public final class OAuth2TokenManager implements TokenProvider {
    * Attempts graceful degradation for transient failures. Returns the cached token
    * if it is still unexpired and the failure is transient (ServiceUnavailableException
    * or RateLimitedException). Rethrows permanent failures immediately.
+   *
+   * <p>Never degrades once the manager is closed: a getToken() racing close() (its
+   * refresh aborted by the closed-flag check or by close() cancelling the refresh
+   * future) must fail like any post-close call, not hand out a token from a closed
+   * manager.
    */
   private String tryGracefulDegradation(TokenException e) {
     OAuth2Token cached = currentToken;
-    if (cached != null
+    if (!closed.get()
+        && cached != null
         && (e instanceof ServiceUnavailableException || e instanceof RateLimitedException)
         && clock.instant().isBefore(cached.expiresAt())) {
       log.warn("Transient refresh failure for client {}. Returning current token (expires at {}): {}",
@@ -997,9 +1003,11 @@ public final class OAuth2TokenManager implements TokenProvider {
    * <p>If an HTTP request is in-flight when close() is called, the request is
    * aborted (for an internally-created client) and any pending retry attempts are
    * short-circuited, so this method may block for the retry backoff in progress
-   * plus up to 5 additional seconds for executor termination. For a
-   * caller-supplied client the in-flight request is not aborted and may run until
-   * that client's own timeout fires.
+   * plus up to 10 seconds of executor shutdown wait (two sequential 5-second
+   * grace periods). For a caller-supplied client the in-flight request is not
+   * aborted — thread interruption cannot abort a blocking socket read — so this
+   * method may block the full shutdown wait and return while that request still
+   * runs to the client's own timeout.
    */
   @Override
   public void close() {
@@ -1031,6 +1039,13 @@ public final class OAuth2TokenManager implements TokenProvider {
     executor.shutdown();
     try {
       if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
+        // Sweep again before forcing shutdown: a refresh thread that passed the
+        // closed-flag check just before close() flipped it may have dispatched
+        // one call after the first cancelAll() (the window between the check and
+        // call registration). By now that call is registered and cancellable.
+        if (ownsHttpClient) {
+          httpClient.dispatcher().cancelAll();
+        }
         executor.shutdownNow();
         if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
           log.error("Executor did not terminate for client {}", config.getClientId());

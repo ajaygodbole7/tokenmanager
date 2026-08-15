@@ -24,6 +24,7 @@ import okhttp3.OkHttpClient;
 import okhttp3.mockwebserver.MockResponse;
 import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class TokenManagerConfigAndSecurityTest extends AbstractMockServerTest {
@@ -365,21 +366,24 @@ class TokenManagerConfigAndSecurityTest extends AbstractMockServerTest {
   }
 
   @Test
-  void shouldRejectCustomHttpClientThatFollowsSslRedirects() {
-    OkHttpClient sslRedirectingClient = httpClient.newBuilder()
+  void shouldAcceptCustomHttpClientWithOnlyFollowRedirectsDisabled() {
+    // followRedirects(false) alone is redirect-proof: OkHttp consults
+    // followSslRedirects only when followRedirects is true, so a client built
+    // with just followRedirects(false) (leaving followSslRedirects at its
+    // default of true) must pass validation.
+    OkHttpClient safeClient = httpClient.newBuilder()
+        .followRedirects(false)
         .followSslRedirects(true)
         .build();
 
     TokenConfig config = TokenConfig.builder()
         .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
-        .clientId("ssl-redirecting-client-" + UUID.randomUUID())
+        .clientId("ssl-redirect-flag-only-" + UUID.randomUUID())
         .clientSecret("test-secret")
-        .httpClient(sslRedirectingClient)
+        .httpClient(safeClient)
         .build();
 
-    assertThatThrownBy(config::validate)
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("followSslRedirects");
+    assertThatCode(config::validate).doesNotThrowAnyException();
   }
 
   @Test

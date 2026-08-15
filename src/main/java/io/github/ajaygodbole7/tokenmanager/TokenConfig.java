@@ -107,10 +107,11 @@ public class TokenConfig {
    * still in flight. Set {@code httpTimeout} to match or exceed the custom
    * client's effective timeout.
    *
-   * <p>A custom client must be built with {@code followRedirects(false)} and
-   * {@code followSslRedirects(false)} — enforced by {@link #validate()}. The token
-   * request carries the client secret (or assertion) in its form body, which
-   * OkHttp would replay to another host on a 307/308 redirect.
+   * <p>A custom client must be built with {@code followRedirects(false)} —
+   * enforced by {@link #validate()}. The token request carries the client secret
+   * (or assertion) in its form body, which OkHttp would replay to another host on
+   * a 307/308 redirect. ({@code followSslRedirects} needs no separate check:
+   * OkHttp consults it only when {@code followRedirects} is enabled.)
    */
   OkHttpClient httpClient;
 
@@ -184,11 +185,13 @@ public class TokenConfig {
     // The token request carries credentials in its form body, and OkHttp replays
     // the body on a 307/308 redirect (only the Authorization header is stripped
     // cross-host) — a redirect from a compromised endpoint would leak them to the
-    // Location host. The internally-created client already disables both flags;
-    // a caller-supplied client must too.
-    if (httpClient != null && (httpClient.followRedirects() || httpClient.followSslRedirects())) {
+    // Location host. followRedirects(false) alone disables all redirect
+    // following, including scheme switches: OkHttp consults followSslRedirects
+    // only when followRedirects is true, so requiring it too would reject
+    // already-safe clients built with just followRedirects(false).
+    if (httpClient != null && httpClient.followRedirects()) {
       throw new IllegalArgumentException(
-          "Custom httpClient must disable followRedirects and followSslRedirects: "
+          "Custom httpClient must disable followRedirects: "
               + "redirects can replay the credential-bearing token request to another host");
     }
 

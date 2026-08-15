@@ -117,21 +117,20 @@ class TokenManagerTimeoutAndLifecycleTest extends AbstractMockServerTest {
 
       OAuth2TokenManager manager = new OAuth2TokenManager(config);
       try {
-        var future = manager.getTokenAsync();
+        manager.getTokenAsync();
         assertThat(firstRequestArrived.await(5, TimeUnit.SECONDS))
             .as("first refresh attempt should reach the server before close()")
             .isTrue();
 
         manager.close();
 
-        // Longer than the full backoff schedule (100ms * 1.5 + 200ms * 1.5 at
-        // maximum jitter) — if the retry loop were still alive it would have
-        // dispatched attempts 2 and 3 by now.
-        Thread.sleep(1500);
+        // No settling sleep needed: close() awaits executor termination, and
+        // without the closed-flag guard the retry loop dispatches attempt 2
+        // ~150ms after cancelAll() — well inside that wait — so requestCount
+        // is already 2 by the time close() returns in the regression case.
         assertThat(requestCount.get())
             .as("no retry attempt may dispatch a new HTTP request after close()")
             .isEqualTo(1);
-        assertThat(future.isCompletedExceptionally()).isTrue();
       } finally {
         releaseServer.countDown();
         manager.close();
@@ -174,6 +173,54 @@ class TokenManagerTimeoutAndLifecycleTest extends AbstractMockServerTest {
       } finally {
         manager.close();
       }
+    }
+  }
+
+  @Test
+  void getTokenRacingCloseFailsInsteadOfReturningCachedToken() throws Exception {
+    MutableClock clock = new MutableClock(Instant.now());
+
+    // Short callTimeout so the refresh thread abandoned by close() dies quickly
+    // and close()'s executor wait doesn't stretch the test.
+    okhttp3.OkHttpClient shortTimeoutClient = httpClient.newBuilder()
+        .callTimeout(Duration.ofSeconds(2))
+        .build();
+
+    TokenConfig config = TokenConfig.builder()
+        .tokenEndpoint(mockWebServer.url(TOKEN_ENDPOINT).toString())
+        .clientId("close-race-degrade-" + UUID.randomUUID())
+        .clientSecret("test-secret")
+        .httpTimeout(Duration.ofSeconds(2))
+        .maxRetryAttempts(1)
+        .refreshThreshold(Duration.ofSeconds(30))
+        .clock(clock)
+        .httpClient(shortTimeoutClient)
+        .build();
+
+    OAuth2TokenManager manager = new OAuth2TokenManager(config);
+    try {
+      mockWebServer.enqueue(successResponse("cached-before-close", 3600));
+      assertThat(manager.getToken()).isEqualTo("cached-before-close");
+      assertThat(mockWebServer.takeRequest(5, TimeUnit.SECONDS)).isNotNull();
+
+      // Inside the refresh threshold but not expired — the exact window where
+      // graceful degradation would otherwise serve the cached token.
+      clock.advance(Duration.ofSeconds(3600 - 10));
+
+      mockWebServer.enqueue(new MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE));
+      var future = manager.getTokenAsync();
+      assertThat(mockWebServer.takeRequest(5, TimeUnit.SECONDS))
+          .as("refresh should be in flight before close()")
+          .isNotNull();
+
+      manager.close();
+
+      // The refresh was aborted by close(); degradation must not hand out a
+      // token from a closed manager even though the cached one is unexpired.
+      assertThatThrownBy(() -> future.get(5, TimeUnit.SECONDS))
+          .hasCauseInstanceOf(ServiceUnavailableException.class);
+    } finally {
+      manager.close();
     }
   }
 
