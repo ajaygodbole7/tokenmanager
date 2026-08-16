@@ -62,6 +62,9 @@ public record OAuth2Token(
   /**
    * Returns token value with type prefix (e.g., "Bearer tokenValue")
    *
+   * <p>Only correct for {@link OAuth2TokenType#BEARER} tokens. MAC tokens require
+   * per-request signing this library does not implement.
+   *
    * @return formatted token for use in Authorization header
    */
   public String getAuthorizationHeaderValue() {

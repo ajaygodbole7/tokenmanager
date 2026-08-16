@@ -300,6 +300,36 @@ class TokenManagerConfigAndSecurityTest extends AbstractMockServerTest {
   // --- Null rejection tests ---
 
   @Test
+  void shouldRejectNullClientId() {
+    assertThatThrownBy(() -> TokenConfig.builder()
+        .tokenEndpoint("https://auth.example.com/token")
+        .clientId(null)
+        .clientSecret("secret")
+        .build())
+        .isInstanceOf(NullPointerException.class);
+  }
+
+  @Test
+  void shouldRejectNullTokenEndpoint() {
+    assertThatThrownBy(() -> TokenConfig.builder()
+        .tokenEndpoint(null)
+        .clientId("client")
+        .clientSecret("secret")
+        .build())
+        .isInstanceOf(NullPointerException.class);
+  }
+
+  @Test
+  void shouldRejectNullClientSecretSupplier() {
+    assertThatThrownBy(() -> TokenConfig.builder()
+        .tokenEndpoint("https://auth.example.com/token")
+        .clientId("client")
+        .clientSecretSupplier(null)
+        .build())
+        .isInstanceOf(NullPointerException.class);
+  }
+
+  @Test
   void shouldRejectNullClock() {
     assertThatThrownBy(() -> TokenConfig.builder()
         .tokenEndpoint("https://auth.example.com/token")

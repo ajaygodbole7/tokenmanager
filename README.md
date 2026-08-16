@@ -204,6 +204,13 @@ For protocol coverage beyond token endpoint exchanges, see [Nimbus OAuth2 SDK](h
 
 OkHttp 5.x, Jackson Databind, Resilience4j, SLF4J. See `pom.xml` for versions.
 
+OkHttp is part of the public API (`TokenConfig` accepts an `okhttp3.OkHttpClient`), so a
+project that already depends on OkHttp must align on a compatible 5.x version — OkHttp 4.x
+on the same classpath will conflict. Note that OkHttp 5.x ships its JVM classes in the
+`okhttp-jvm` artifact; the plain `okhttp` coordinate is a metadata-only jar. Jackson 3
+(`tools.jackson.*`) uses different packages and coordinates than Jackson 2, so it coexists
+with a Jackson 2.x dependency tree without conflict.
+
 ## Status
 
 0.1.0-SNAPSHOT. Pre-release. API may change before 1.0.

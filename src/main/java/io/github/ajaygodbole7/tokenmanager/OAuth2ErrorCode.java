@@ -18,7 +18,12 @@ package io.github.ajaygodbole7.tokenmanager;
 import java.util.HashMap;
 import java.util.Map;
 
-public enum OAuth2ErrorCode {
+/**
+ * OAuth2 error codes recognized when classifying token-endpoint error responses.
+ * Package-private: consumed only by {@link OAuth2TokenManager} to select which
+ * {@link TokenException} subclass to throw — nothing in the public API exposes it.
+ */
+enum OAuth2ErrorCode {
   /**
    * {@code invalid_request} - The request is missing a required parameter, includes an
    * invalid parameter value, includes a parameter more than once, or is otherwise

@@ -19,6 +19,15 @@ import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 
+/**
+ * The {@code token_type} reported by the authorization server.
+ *
+ * <p>{@code MAC} and {@code BASIC} are recognized so a non-Bearer response is
+ * classified without failing, but this library implements no MAC request signing
+ * — {@link OAuth2Token#getAuthorizationHeaderValue()} produces a correct
+ * {@code Authorization} header only for {@code BEARER}. Unknown token types
+ * default to {@code BEARER}.
+ */
 public enum OAuth2TokenType {
   BEARER("Bearer"),
   MAC("MAC"),

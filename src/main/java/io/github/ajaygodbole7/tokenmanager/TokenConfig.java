@@ -28,6 +28,21 @@ import lombok.Value;
 import okhttp3.HttpUrl;
 import okhttp3.OkHttpClient;
 
+/**
+ * Immutable configuration for {@link OAuth2TokenManager}, created via
+ * {@link #builder()}.
+ *
+ * <p><b>Validation timing:</b> {@code build()} enforces only per-field null
+ * checks. Full validation — HTTPS endpoint, blank checks, numeric ranges,
+ * grant-type-specific required fields, custom-client redirect settings — runs in
+ * {@link #validate()}, which the {@link OAuth2TokenManager} constructor invokes.
+ * A built {@code TokenConfig} is therefore not necessarily valid until a manager
+ * has been constructed from it (or {@code validate()} called directly).
+ *
+ * <p>Credentials are supplied as {@link Supplier}s so rotated secrets are picked
+ * up on each refresh; the {@code clientSecret(String)} and
+ * {@code assertion(String)} builder methods wrap fixed values for convenience.
+ */
 @Value
 @Builder
 @ToString(exclude = {

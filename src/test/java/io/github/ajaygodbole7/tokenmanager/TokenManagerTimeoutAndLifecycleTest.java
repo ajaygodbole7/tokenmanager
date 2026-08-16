@@ -16,6 +16,7 @@
 package io.github.ajaygodbole7.tokenmanager;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.File;
@@ -174,6 +175,21 @@ class TokenManagerTimeoutAndLifecycleTest extends AbstractMockServerTest {
         manager.close();
       }
     }
+  }
+
+  @Test
+  void invalidateAfterCloseIsASilentNoOp() {
+    // Documented contract: invalidate() has no closed-state guard and must be a
+    // harmless no-op after close() — it neither throws nor resurrects the manager.
+    mockWebServer.enqueue(successResponse("token-before-close", 3600));
+    assertThat(tokenManager.getToken()).isEqualTo("token-before-close");
+
+    tokenManager.close();
+
+    assertThatCode(tokenManager::invalidate).doesNotThrowAnyException();
+    assertThatThrownBy(tokenManager::getToken)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("closed");
   }
 
   @Test

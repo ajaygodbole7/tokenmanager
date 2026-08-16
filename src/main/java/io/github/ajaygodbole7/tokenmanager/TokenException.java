@@ -15,6 +15,17 @@
  */
 package io.github.ajaygodbole7.tokenmanager;
 
+/**
+ * Root of the sealed exception hierarchy thrown by {@link TokenProvider} operations.
+ *
+ * <p><b>Stability commitment:</b> the permitted set of subclasses —
+ * {@link InvalidCredentialsException}, {@link InvalidConfigurationException},
+ * {@link InvalidEndpointException}, {@link RateLimitedException},
+ * {@link ServiceUnavailableException} — is considered closed and stable. Callers
+ * are encouraged to switch exhaustively over it; adding a subclass would be a
+ * source-breaking change for every such switch and will not happen within a
+ * major version.
+ */
 public sealed class TokenException extends RuntimeException
     permits InvalidCredentialsException, InvalidConfigurationException,
             InvalidEndpointException, RateLimitedException,
